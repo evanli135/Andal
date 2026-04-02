@@ -1,0 +1,16 @@
+# Python dependencies for Fast Event Store
+
+# Core dependencies
+setuptools>=65.0
+
+# Testing
+pytest>=7.0.0
+pytest-cov>=4.0.0
+
+# Benchmarking
+pandas>=2.0.0
+
+# Optional: for development
+black>=23.0.0
+mypy>=1.0.0
+ruff>=0.0.260

@@ -1,0 +1,60 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+*.whl
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# C/C++
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+*.out
+*.exe
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Build artifacts
+src/*.o
+src/*.a
+python/fastevents_module*.so
+*.db
+*.log
+
+# Test artifacts
+.tox/
+.nox/
+coverage.xml
+*.cover
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+
+# Example databases
+examples/*.db
+example_events.db
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
