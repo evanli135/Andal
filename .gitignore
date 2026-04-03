@@ -24,7 +24,8 @@ htmlcov/
 *.exe
 
 # IDEs
-.vscode/
+.vscode/*
+!.vscode/c_cpp_properties.json
 .idea/
 *.swp
 *.swo
@@ -35,6 +36,7 @@ htmlcov/
 src/*.o
 src/*.a
 python/fastevents_module*.so
+test_storage
 *.db
 *.log
 
