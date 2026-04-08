@@ -97,17 +97,6 @@ int event_store_flush(EventStore* store);
 // ============================================================================
 
 /**
- * QueryFilter: Specification for filtering events.
- */
-typedef struct {
-    const char* event_type;   // Filter by event type (NULL = any)
-    uint64_t user_id;         // Filter by user ID (0 = any)
-    bool filter_user;         // Whether to apply user_id filter
-    uint64_t start_time;      // Minimum timestamp (0 = no limit)
-    uint64_t end_time;        // Maximum timestamp (0 = no limit)
-} QueryFilter;
-
-/**
  * QueryResult: Results from a filter query.
  * Contains columnar arrays for efficient access.
  */
@@ -116,30 +105,33 @@ typedef struct {
     uint64_t* user_ids;       // User IDs
     uint64_t* timestamps;     // Timestamps
     char** properties;        // JSON properties (NULL if none)
-    size_t count;             // Number of results
+    size_t count;             // Number of matched rows
+    size_t capacity;          // Allocated capacity (internal, do not use)
 } QueryResult;
 
 /**
  * Filter events by criteria.
- * Searches across all segments, using indexes when available.
+ * Searches across all segments and the active block.
  *
- * @param store   EventStore handle
- * @param filter  Query filter specification
- * @return        QueryResult with matching events, or NULL on error
+ * @param store       EventStore handle
+ * @param event_type  Event type to match (NULL = any)
+ * @param user_id     User ID to match (0 = any)
+ * @param start_ts    Minimum timestamp inclusive (0 = no lower bound)
+ * @param end_ts      Maximum timestamp inclusive (0 = no upper bound)
+ * @return            QueryResult with matching events, or NULL on error
  *
  * Example:
- *   QueryFilter f = {
- *       .event_type = "page_view",
- *       .user_id = 123,
- *       .filter_user = true,
- *       .start_time = 0,
- *       .end_time = 0
- *   };
- *   QueryResult* results = event_store_filter(db, &f);
+ *   QueryResult* r = event_store_filter(db, "page_view", 123, 0, 0);
  *   // ... use results ...
- *   query_result_destroy(results);
+ *   query_result_destroy(r);
  */
-QueryResult* event_store_filter(EventStore* store, const QueryFilter* filter);
+QueryResult* event_store_filter(
+    EventStore*  store,
+    const char*  event_type,
+    uint64_t     user_id,
+    uint64_t     start_ts,
+    uint64_t     end_ts
+);
 
 /**
  * Free a query result.

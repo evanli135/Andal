@@ -139,42 +139,37 @@ static int string_dict_resize(StringDict* dict) {
     return FE_OK;
 }
 
-// Get ID for string, or add if not exists
-int string_dict_get_or_add(StringDict* dict, const char* str, uint32_t* out_id) {
-    if (!dict || !str || !out_id) {
-        return FE_INVALID_ARG;
-    }
+// Look up a string and return its ID, or UINT32_MAX if not present.
+uint32_t string_dict_get(const StringDict* dict, const char* str) {
+    if (!dict || !str) return UINT32_MAX;
 
-    // Check load factor - resize if needed
+    bool found;
+    size_t slot = string_dict_find_slot(dict, str, &found);
+    return found ? dict->ids[slot] : UINT32_MAX;
+}
+
+// Add a new string and return its assigned ID, or UINT32_MAX on OOM.
+// Behaviour is undefined if str is already in the dict.
+uint32_t string_dict_add(StringDict* dict, const char* str) {
+    if (!dict || !str) return UINT32_MAX;
+
+    // Resize before inserting if we're above the load factor threshold
     double load_factor = (double)dict->count / dict->capacity;
     if (load_factor > MAX_LOAD_FACTOR) {
-        int err = string_dict_resize(dict);
-        if (err != FE_OK) return err;
+        if (string_dict_resize(dict) != FE_OK) return UINT32_MAX;
     }
 
-    // Find slot
     bool found;
     size_t slot = string_dict_find_slot(dict, str, &found);
 
-    if (found) {
-        // String already exists
-        *out_id = dict->ids[slot];
-        return FE_OK;
-    }
-
-    // Add new entry
     dict->strings[slot] = strdup(str);
-    if (!dict->strings[slot]) {
-        return FE_OUT_OF_MEMORY;
-    }
+    if (!dict->strings[slot]) return UINT32_MAX;
 
-    // Assign next sequential ID
     uint32_t new_id = (uint32_t)dict->count;
     dict->ids[slot] = new_id;
     dict->count++;
 
-    *out_id = new_id;
-    return FE_OK;
+    return new_id;
 }
 
 // Destroy dictionary
@@ -189,53 +184,106 @@ void string_dict_destroy(StringDict* dict) {
     free(dict);
 }
 
-// Print dictionary stats (for debugging)
+// Persist the dictionary to a plain text file — one "string id" line per entry.
+// Entries are written in ID order so load restores the same ID assignments.
+int string_dict_save(const StringDict* dict, const char* path) {
+    if (!dict || !path) return FE_INVALID_ARG;
+
+    FILE* f = fopen(path, "w");
+    if (!f) return FE_IO_ERROR;
+
+    // Build a sorted-by-id list so the file is in stable ID order
+    // (hash table iteration order is not insertion order)
+    const char** sorted = calloc(dict->count, sizeof(char*));
+    if (!sorted) { fclose(f); return FE_OUT_OF_MEMORY; }
+
+    for (size_t i = 0; i < dict->capacity; i++) {
+        if (dict->strings[i])
+            sorted[dict->ids[i]] = dict->strings[i];
+    }
+
+    int err = FE_OK;
+    for (size_t id = 0; id < dict->count; id++) {
+        if (fprintf(f, "%s %zu\n", sorted[id], id) < 0) {
+            err = FE_IO_ERROR;
+            break;
+        }
+    }
+
+    free(sorted);
+    fclose(f);
+    return err;
+}
+
+// Load a dictionary previously saved with string_dict_save.
+// Returns a new StringDict — caller owns it.
+StringDict* string_dict_load(const char* path) {
+    if (!path) return NULL;
+
+    FILE* f = fopen(path, "r");
+    if (!f) return NULL;
+
+    StringDict* dict = string_dict_create(64);
+    if (!dict) { fclose(f); return NULL; }
+
+    char line[1024];
+    while (fgets(line, sizeof(line), f)) {
+        char name[1024];
+        size_t id;
+        if (sscanf(line, "%1023s %zu", name, &id) != 2) continue;
+
+        uint32_t assigned = string_dict_add(dict, name);
+        if (assigned == UINT32_MAX || assigned != (uint32_t)id) {
+            // ID mismatch means the file is corrupt or out of order
+            string_dict_destroy(dict);
+            fclose(f);
+            return NULL;
+        }
+    }
+
+    fclose(f);
+    return dict;
+}
+
+static void compute_probe_stats(const StringDict* dict, size_t* out_total, size_t* out_max) {
+    *out_total = 0;
+    *out_max   = 0;
+    for (size_t i = 0; i < dict->capacity; i++) {
+        if (!dict->strings[i]) continue;
+        uint32_t hash  = hash_string(dict->strings[i]);
+        size_t   ideal = hash & (dict->capacity - 1);
+        size_t   probes = (i >= ideal) ? i - ideal : dict->capacity - ideal + i;
+        *out_total += probes;
+        if (probes > *out_max) *out_max = probes;
+    }
+}
+
+static void print_entries(const StringDict* dict) {
+    if (dict->count > 20) {
+        printf("  ... (%zu total entries)\n", dict->count);
+        return;
+    }
+    for (size_t i = 0; i < dict->capacity; i++) {
+        if (dict->strings[i])
+            printf("  [%zu] \"%s\" -> %u\n", i, dict->strings[i], dict->ids[i]);
+    }
+}
+
 void string_dict_stats(const StringDict* dict) {
     if (!dict) return;
+
+    size_t total_probes, max_probe;
+    compute_probe_stats(dict, &total_probes, &max_probe);
 
     printf("=== StringDict Stats ===\n");
     printf("Entries: %zu / %zu (%.1f%% full)\n",
            dict->count, dict->capacity,
            100.0 * dict->count / dict->capacity);
     printf("Load factor: %.2f (max %.2f)\n",
-           (double)dict->count / dict->capacity,
-           MAX_LOAD_FACTOR);
-
-    // Calculate probe statistics
-    size_t total_probes = 0;
-    size_t max_probe = 0;
-
-    for (size_t i = 0; i < dict->capacity; i++) {
-        if (dict->strings[i] != NULL) {
-            uint32_t hash = hash_string(dict->strings[i]);
-            size_t ideal_slot = hash & (dict->capacity - 1);
-            size_t actual_slot = i;
-
-            size_t probes;
-            if (actual_slot >= ideal_slot) {
-                probes = actual_slot - ideal_slot;
-            } else {
-                probes = (dict->capacity - ideal_slot) + actual_slot;
-            }
-
-            total_probes += probes;
-            if (probes > max_probe) {
-                max_probe = probes;
-            }
-        }
-    }
-
+           (double)dict->count / dict->capacity, MAX_LOAD_FACTOR);
     printf("Avg probe length: %.2f\n",
            dict->count > 0 ? (double)total_probes / dict->count : 0);
     printf("Max probe length: %zu\n", max_probe);
-
     printf("\nEntries:\n");
-    for (size_t i = 0; i < dict->capacity && dict->count <= 20; i++) {
-        if (dict->strings[i] != NULL) {
-            printf("  [%zu] \"%s\" -> %u\n", i, dict->strings[i], dict->ids[i]);
-        }
-    }
-    if (dict->count > 20) {
-        printf("  ... (%zu total entries)\n", dict->count);
-    }
+    print_entries(dict);
 }

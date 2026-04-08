@@ -7,6 +7,13 @@
 #include <string.h>
 #include "wal.h"
 
+#ifdef _WIN32
+#include <io.h>
+#define datasync(fd) _commit(fd)
+#else
+#define datasync(fd) fdatasync(fd)
+#endif
+
 // Map WAL error codes to storage error codes for compatibility
 #define FE_OK WAL_OK
 #define FE_INVALID_ARG WAL_INVALID_ARG
@@ -91,13 +98,30 @@ int wal_flush_to_disk(WAL* wal) {
 
     // blocks until the OS confirms the data has physically hit storage — not just the kernel page cache
     // write + fdatasync survives powerloss and process crash
-    if (fdatasync(wal->fd) != 0) {
+    if (datasync(wal->fd) != 0) {
         return FE_IO_ERROR;
     }
 
     // Reset WAL cursor
     wal->buf_len = 0;
     wal->event_count = 0;
+
+    return FE_OK;
+}
+
+int wal_truncate(WAL* wal) {
+    if (!wal) return FE_INVALID_ARG;
+
+    wal->buf_len = 0;
+    wal->event_count = 0;
+
+    close(wal->fd);
+    FILE* f = fopen(wal->path, "w");
+    if (!f) return FE_IO_ERROR;
+    fclose(f);
+
+    wal->fd = open(wal->path, O_CREAT | O_WRONLY | O_APPEND, 0644);
+    if (wal->fd < 0) return FE_IO_ERROR;
 
     return FE_OK;
 }

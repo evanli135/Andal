@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(gcc:*)",
+      "Bash(clang --version)",
+      "Bash(make test-disk:*)",
+      "Bash(./test_disk)",
+      "Bash(make test:*)",
+      "Bash(/c/msys64/ucrt64/bin/mingw32-make test:*)"
+    ]
+  }
+}

@@ -148,11 +148,12 @@ void event_block_stats(const EventBlock* block) {
            100.0 * block->count / block->capacity);
 
     if (block->count > 0) {
-        printf("Time range: %lu - %lu\n",
-               block->min_timestamp, block->max_timestamp);
+        printf("Time range: %llu - %llu\n",
+               (unsigned long long)block->min_timestamp,
+               (unsigned long long)block->max_timestamp);
         uint64_t time_span = block->max_timestamp - block->min_timestamp;
-        printf("Time span: %lu ms (%.1f seconds)\n",
-               time_span, time_span / 1000.0);
+        printf("Time span: %llu ms (%.1f seconds)\n",
+               (unsigned long long)time_span, time_span / 1000.0);
     }
 
     size_t mem_bytes = block->capacity * (
@@ -186,17 +187,18 @@ Segment* segment_create(uint64_t id, EventBlock* block, char* file_path) {
 
     segment->is_loaded = true;
 
-    segment->min_timestamp = UINT64_MAX; 
-    segment->max_timestamp = 0;
-    segment->event_count = 0;
+    segment->min_timestamp = block ? block->min_timestamp : UINT64_MAX;
+    segment->max_timestamp = block ? block->max_timestamp : 0;
+    segment->event_count   = block ? block->count : 0;
 
     return segment;
 }
 
-int segment_write_to_disk(Segment* seg, const char* dir) {
-    
-    
-    return FE_OK;
+void segment_unload(Segment* seg) {
+    if (!seg || !seg->is_loaded) return;
+    destroy_event_block(seg->block);
+    seg->block     = NULL;
+    seg->is_loaded = false;
 }
 
 void segment_destroy(Segment* seg) {

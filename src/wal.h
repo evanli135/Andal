@@ -4,9 +4,6 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <string.h>
 
 // Error codes (same as storage.h)
 typedef enum {
@@ -48,6 +45,10 @@ int wal_append(WAL* wal, const uint8_t* data, size_t len);
 
 // Force flush buffer to disk with fdatasync() — guarantees durability
 int wal_flush_to_disk(WAL* wal);
+
+// Truncate wal.log to empty and reset the in-memory buffer.
+// Called after a successful segment flush — WAL entries are now redundant.
+int wal_truncate(WAL* wal);
 
 // Destroy WAL (flushes any pending data first)
 void wal_destroy(WAL* wal);
