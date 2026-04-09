@@ -1,4 +1,4 @@
-# FastEvents
+# Andal
 
 High-performance embedded event store for Python. Optimized for analytics workloads with columnar storage and inverted indexes.
 
