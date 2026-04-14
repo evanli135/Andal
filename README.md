@@ -1,6 +1,6 @@
 <div align="center">
 
-# ⚡ FastEvents
+# ⚡ Andal
 
 **High-performance embedded event store for Python**
 
