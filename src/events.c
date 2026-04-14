@@ -38,10 +38,11 @@ EventBlock* create_event_block(size_t initial_capacity) {
     }
 
     // Initialize metadata
-    block->count = 0;
-    block->capacity = initial_capacity;
-    block->min_timestamp = UINT64_MAX;  // Will be updated on first append
-    block->max_timestamp = 0;
+    block->count           = 0;
+    block->capacity        = initial_capacity;
+    block->min_timestamp   = UINT64_MAX;  // Will be updated on first append
+    block->max_timestamp   = 0;
+    block->estimated_bytes = 0;
 
     return block;
 }
@@ -109,6 +110,10 @@ int append_to_block(
 
     // Increment count
     block->count++;
+
+    // Track estimated serialized size: fixed fields + properties string
+    block->estimated_bytes += sizeof(uint32_t) + sizeof(uint64_t) * 2 +
+        (properties_json ? strlen(properties_json) + 1 : 0);
 
     // Update metadata (check both - not else if!)
     if (timestamp < block->min_timestamp) {

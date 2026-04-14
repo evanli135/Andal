@@ -36,18 +36,25 @@ int query_result_append(QueryResult* result, uint32_t type_id, uint64_t user_id,
     if (result->count >= result->capacity) {
         size_t new_cap = result->capacity * 2;
 
-        uint32_t* new_type_ids = realloc(result->event_type_ids, new_cap * sizeof(uint32_t));
-        uint64_t* new_user_ids = realloc(result->user_ids,       new_cap * sizeof(uint64_t));
-        uint64_t* new_ts       = realloc(result->timestamps,     new_cap * sizeof(uint64_t));
-        char**    new_props    = realloc(result->properties,     new_cap * sizeof(char*));
+        // Assign immediately before checking: if any realloc returns NULL the
+        // original pointer has already been freed, so we must not hold a stale copy.
+        uint32_t* tmp_type_ids = realloc(result->event_type_ids, new_cap * sizeof(uint32_t));
+        if (!tmp_type_ids) return FE_OUT_OF_MEMORY;
+        result->event_type_ids = tmp_type_ids;
 
-        if (!new_type_ids || !new_user_ids || !new_ts || !new_props) return FE_OUT_OF_MEMORY;
+        uint64_t* tmp_user_ids = realloc(result->user_ids, new_cap * sizeof(uint64_t));
+        if (!tmp_user_ids) return FE_OUT_OF_MEMORY;
+        result->user_ids = tmp_user_ids;
 
-        result->event_type_ids = new_type_ids;
-        result->user_ids       = new_user_ids;
-        result->timestamps     = new_ts;
-        result->properties     = new_props;
-        result->capacity       = new_cap;
+        uint64_t* tmp_ts = realloc(result->timestamps, new_cap * sizeof(uint64_t));
+        if (!tmp_ts) return FE_OUT_OF_MEMORY;
+        result->timestamps = tmp_ts;
+
+        char** tmp_props = realloc(result->properties, new_cap * sizeof(char*));
+        if (!tmp_props) return FE_OUT_OF_MEMORY;
+        result->properties = tmp_props;
+
+        result->capacity = new_cap;
     }
 
     size_t i = result->count;

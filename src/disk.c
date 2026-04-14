@@ -240,6 +240,25 @@ done:
     return err;
 }
 
+int segment_peek_metadata(Segment* seg) {
+    if (!seg || !seg->file_path) return FE_INVALID_ARG;
+
+    int fd = open(seg->file_path, O_RDONLY | O_BINARY);
+    if (fd < 0) return FE_IO_ERROR;
+
+    SegmentHeader hdr;
+    int err = read_and_validate_header(fd, &hdr);
+    close(fd);
+    if (err != FE_OK) return err;
+
+    seg->min_timestamp = hdr.min_timestamp;
+    seg->max_timestamp = hdr.max_timestamp;
+    seg->event_count   = hdr.event_count;
+    seg->is_loaded     = false;
+    seg->block         = NULL;
+    return FE_OK;
+}
+
 int segment_load_from_disk(Segment* seg) {
     if (!seg || !seg->file_path) return FE_INVALID_ARG;
 
@@ -271,93 +290,3 @@ int segment_load_from_disk(Segment* seg) {
     return FE_OK;
 }
 
-// ── Delete helpers ────────────────────────────────────────────────────────────
-
-typedef bool (*RowPredicate)(uint32_t type_id, uint64_t user_id, uint64_t timestamp,
-                             const char* properties, void* ctx);
-
-static size_t count_survivors(EventBlock* b, RowPredicate predicate, void* ctx) {
-    size_t survivors = 0;
-    for (size_t i = 0; i < b->count; i++) {
-        if (!predicate(b->event_type_ids[i], b->user_ids[i],
-                       b->timestamps[i], b->properties[i], ctx))
-            survivors++;
-    }
-    return survivors;
-}
-
-static EventBlock* build_filtered_block(EventBlock* old, size_t survivors,
-                                        RowPredicate predicate, void* ctx) {
-    EventBlock* block = create_event_block(survivors ? survivors : 1);
-    if (!block) return NULL;
-
-    for (size_t i = 0; i < old->count; i++) {
-        if (!predicate(old->event_type_ids[i], old->user_ids[i],
-                       old->timestamps[i], old->properties[i], ctx)) {
-            int err = append_to_block(block, old->event_type_ids[i],
-                                      old->user_ids[i], old->timestamps[i],
-                                      old->properties[i]);
-            if (err != FE_OK) { destroy_event_block(block); return NULL; }
-        }
-    }
-    return block;
-}
-
-// Write block to a .tmp file then atomically rename it over path.
-static int write_block_atomic(EventBlock* block, const char* path) {
-    size_t path_len = strlen(path);
-    char* tmp_path = malloc(path_len + 5);
-    if (!tmp_path) return FE_OUT_OF_MEMORY;
-    memcpy(tmp_path, path, path_len);
-    memcpy(tmp_path + path_len, ".tmp", 5);
-
-    uint32_t* prop_offsets = malloc(block->count * sizeof(uint32_t));
-    if (!prop_offsets) { free(tmp_path); return FE_OUT_OF_MEMORY; }
-
-    size_t heap_size = build_prop_offsets(block, prop_offsets);
-    char* prop_heap  = build_prop_heap(block, heap_size);
-    if (heap_size > 0 && !prop_heap) {
-        free(prop_offsets); free(tmp_path); return FE_OUT_OF_MEMORY;
-    }
-
-    SegmentHeader hdr = build_header(block, heap_size);
-    int err = write_to_file(tmp_path, &hdr, block, prop_offsets, prop_heap, heap_size);
-    free(prop_offsets);
-    free(prop_heap);
-
-    if (err != FE_OK || rename(tmp_path, path) != 0) {
-        unlink(tmp_path); free(tmp_path);
-        return err != FE_OK ? err : FE_IO_ERROR;
-    }
-
-    free(tmp_path);
-    return FE_OK;
-}
-
-// ── Public API (continued) ────────────────────────────────────────────────────
-
-int segment_delete_where(Segment* seg, RowPredicate predicate, void* ctx) {
-    if (!seg || !predicate) return FE_INVALID_ARG;
-
-    if (!seg->is_loaded) {
-        int err = segment_load_from_disk(seg);
-        if (err != FE_OK) return err;
-    }
-
-    size_t survivors = count_survivors(seg->block, predicate, ctx);
-    if (survivors == seg->block->count) return FE_OK;
-
-    EventBlock* new_block = build_filtered_block(seg->block, survivors, predicate, ctx);
-    if (!new_block) return FE_OUT_OF_MEMORY;
-
-    int err = write_block_atomic(new_block, seg->file_path);
-    if (err != FE_OK) { destroy_event_block(new_block); return err; }
-
-    destroy_event_block(seg->block);
-    seg->block         = new_block;
-    seg->event_count   = new_block->count;
-    seg->min_timestamp = new_block->min_timestamp;
-    seg->max_timestamp = new_block->max_timestamp;
-
-    return FE_OK;
-}

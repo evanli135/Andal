@@ -8,7 +8,7 @@ PartitionIndex* partition_index_create(void) {
     PartitionIndex* idx = malloc(sizeof(PartitionIndex));
     if (!idx) return NULL;
 
-    idx->entries = malloc(16 * sizeof(PartitionEntry));
+    idx->entries = malloc(PARTITION_INITIAL_CAPACITY * sizeof(PartitionEntry));
     if (!idx->entries) {
         free(idx);
         return NULL;

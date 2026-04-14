@@ -45,7 +45,7 @@ WAL* wal_create(const char* path) {
     wal->buf_capacity = WAL_DEFAULT_BUFFER_CAPACITY;
     wal->flush_threshold = WAL_DEFAULT_FLUSH_THRESHOLD;  
     
-    wal->fd = open(path, O_CREAT | O_WRONLY | O_APPEND, 0644); // Append mode
+    wal->fd = open(path, O_CREAT | O_WRONLY | O_APPEND | O_BINARY, 0644);
     if (wal->fd < 0) {
         free(wal->buffer);
         free(wal);
@@ -120,7 +120,7 @@ int wal_truncate(WAL* wal) {
     if (!f) return FE_IO_ERROR;
     fclose(f);
 
-    wal->fd = open(wal->path, O_CREAT | O_WRONLY | O_APPEND, 0644);
+    wal->fd = open(wal->path, O_CREAT | O_WRONLY | O_APPEND | O_BINARY, 0644);
     if (wal->fd < 0) return FE_IO_ERROR;
 
     return FE_OK;
@@ -145,7 +145,7 @@ int wal_recover(WAL* wal, void (*on_event)(const uint8_t* data, size_t len, void
     if (!wal || !on_event) return FE_INVALID_ARG;
 
     // Open separate read-only fd — don't disturb the write fd
-    int fd = open(wal->path, O_RDONLY);
+    int fd = open(wal->path, O_RDONLY | O_BINARY);
     if (fd < 0) return FE_OK;  // No WAL file = nothing to recover, not an error
 
     uint32_t len32;

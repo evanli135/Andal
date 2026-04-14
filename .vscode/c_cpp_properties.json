@@ -4,7 +4,8 @@
             "name": "Win32",
             "includePath": [
                 "${workspaceFolder}/**",
-                "${workspaceFolder}/src"
+                "${workspaceFolder}/src",
+                "C:/msys64/ucrt64/include/python3.11"
             ],
             "defines": [
                 "_POSIX_C_SOURCE=200809L"

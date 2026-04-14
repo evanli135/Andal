@@ -1,16 +1,19 @@
 """
-High-level Python API for Fast Event Store
+High-level Python API for FastEvents.
 
-This module provides the user-facing EventStore class that wraps
-the C extension module.
+Wraps the _fastevents C extension with a Pythonic interface:
+- track() instead of append() to match analytics terminology
+- **properties kwargs instead of a raw JSON string
+- filter() returns proper Event dicts with parsed properties
+- count_by() and unique() implemented in Python on top of filter()
 """
 
-from typing import List, Dict, Optional, Any
 import json
-from .types import Event, QuerySpec, EventStats
+import time
+from typing import Any, Dict, List, Optional
 
-# This will be the C extension module (not implemented yet)
-# import _fastevents
+import _fastevents
+from .types import Event
 
 
 class EventStore:
@@ -18,31 +21,25 @@ class EventStore:
     High-performance embedded event store.
 
     Example:
-        >>> db = EventStore("events.db")
-        >>> db.track("page_view", user_id=123, page="/pricing")
-        >>> events = db.filter(event_type="page_view", user_id=123)
+        with EventStore("./data") as db:
+            db.track("page_view", user_id=123, page="/pricing")
+            events = db.filter(event_type="page_view", user_id=123)
     """
 
     def __init__(self, db_path: str):
-        """
-        Open or create an event store at the given path.
-
-        Args:
-            db_path: Path to the database file
-        """
-        self.db_path = db_path
-        # TODO: Initialize C extension
-        # self._handle = _fastevents.open(db_path)
-        self._handle = None
+        self._store = _fastevents.EventStore(db_path)
 
     def __enter__(self):
-        """Context manager support"""
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        """Close the store on context exit"""
         self.close()
         return False
+
+    def __del__(self):
+        self.close()
+
+    # ── Write ──────────────────────────────────────────────────────────────────
 
     def track(self,
               event_type: str,
@@ -53,32 +50,33 @@ class EventStore:
         Track a new event.
 
         Args:
-            event_type: Type of event (e.g., "page_view", "click")
-            user_id: User identifier
-            timestamp: Unix timestamp in milliseconds (defaults to now)
-            **properties: Additional event properties
+            event_type: Event type string (e.g. "page_view", "click")
+            user_id:    User identifier (must be > 0)
+            timestamp:  Unix timestamp in milliseconds (defaults to now)
+            **properties: Any additional key/value properties
 
         Example:
-            >>> db.track("click", user_id=123, button="signup", page="/pricing")
+            db.track("click", user_id=123, button="signup", page="/pricing")
         """
-        if timestamp is None:
-            import time
-            timestamp = int(time.time() * 1000)
-
-        # Validate inputs
         if not event_type:
             raise ValueError("event_type cannot be empty")
-        if not isinstance(user_id, int) or user_id < 0:
-            raise ValueError("user_id must be a non-negative integer")
-        if not isinstance(timestamp, int) or timestamp < 0:
+        if not isinstance(user_id, int) or user_id <= 0:
+            raise ValueError("user_id must be a positive integer")
+
+        if timestamp is None:
+            timestamp = int(time.time() * 1000)
+        elif not isinstance(timestamp, int) or timestamp < 0:
             raise ValueError("timestamp must be a non-negative integer")
 
-        # Convert properties to JSON
-        properties_json = json.dumps(properties) if properties else "{}"
+        props_json = json.dumps(properties) if properties else None
+        self._store.append(event_type, user_id=user_id,
+                           timestamp=timestamp, properties=props_json)
 
-        # TODO: Call C extension
-        # _fastevents.append(self._handle, event_type, user_id, timestamp, properties_json)
-        print(f"[TODO] Track: {event_type}, user={user_id}, ts={timestamp}, props={properties_json}")
+    def flush(self) -> None:
+        """Flush the active event buffer to a segment file on disk."""
+        self._store.flush()
+
+    # ── Query ──────────────────────────────────────────────────────────────────
 
     def filter(self,
                event_type: Optional[str] = None,
@@ -86,34 +84,26 @@ class EventStore:
                start_time: Optional[int] = None,
                end_time: Optional[int] = None) -> List[Event]:
         """
-        Filter events by criteria.
+        Filter events by criteria. All parameters are optional.
 
         Args:
-            event_type: Filter by event type
-            user_id: Filter by user ID
-            start_time: Minimum timestamp (inclusive)
-            end_time: Maximum timestamp (exclusive)
+            event_type: Match only this event type (None = any)
+            user_id:    Match only this user (None = any)
+            start_time: Minimum timestamp inclusive in ms (None = no bound)
+            end_time:   Maximum timestamp inclusive in ms (None = no bound)
 
         Returns:
-            List of matching events
-
-        Example:
-            >>> events = db.filter(event_type="page_view", user_id=123)
-            >>> recent = db.filter(start_time=int(time.time() * 1000) - 86400000)  # Last 24h
+            List of Event dicts with keys: event_type, user_id, timestamp, properties
         """
-        spec = QuerySpec(
-            event_type=event_type,
-            user_id=user_id,
-            start_time=start_time,
-            end_time=end_time
+        rows = self._store.filter(
+            event_type,
+            user_id    or 0,
+            start_time or 0,
+            end_time   or 0,
         )
+        return [_parse_row(r) for r in rows]
+    
 
-        # TODO: Call C extension
-        # results = _fastevents.filter(self._handle, spec)
-        # return results
-
-        print(f"[TODO] Filter: {spec}")
-        return []
 
     def count_by(self,
                  field: str,
@@ -124,27 +114,27 @@ class EventStore:
         Count events grouped by a field.
 
         Args:
-            field: Field to group by ("event_type" or "user_id")
-            event_type: Optional filter by event type
+            field:      "event_type" or "user_id"
+            event_type: Optional pre-filter by event type
             start_time: Optional minimum timestamp
-            end_time: Optional maximum timestamp
+            end_time:   Optional maximum timestamp
 
         Returns:
-            Dictionary mapping field values to counts
+            Dict mapping field value → count
 
         Example:
-            >>> counts = db.count_by("event_type")
-            >>> # {"page_view": 5234, "click": 892, ...}
+            db.count_by("event_type")  # {"page_view": 5234, "click": 892}
         """
         if field not in ("event_type", "user_id"):
             raise ValueError(f"count_by only supports 'event_type' or 'user_id', got '{field}'")
 
-        # TODO: Call C extension
-        # results = _fastevents.count_by(self._handle, field, event_type, start_time, end_time)
-        # return results
-
-        print(f"[TODO] Count by {field}")
-        return {}
+        events = self.filter(event_type=event_type,
+                             start_time=start_time, end_time=end_time)
+        counts: Dict[Any, int] = {}
+        for e in events:
+            key = e[field]
+            counts[key] = counts.get(key, 0) + 1
+        return counts
 
     def unique(self,
                field: str,
@@ -152,67 +142,185 @@ class EventStore:
                start_time: Optional[int] = None,
                end_time: Optional[int] = None) -> int:
         """
-        Count unique values for a field.
+        Count distinct values for a field across matching events.
 
         Args:
-            field: Field to count unique values for ("user_id")
-            event_type: Optional filter by event type
+            field:      Field to count unique values for ("user_id")
+            event_type: Optional pre-filter by event type
             start_time: Optional minimum timestamp
-            end_time: Optional maximum timestamp
+            end_time:   Optional maximum timestamp
 
         Returns:
             Number of unique values
 
         Example:
-            >>> unique_users = db.unique("user_id", event_type="purchase")
+            db.unique("user_id", event_type="purchase")
         """
-        if field != "user_id":
-            raise ValueError(f"unique() currently only supports 'user_id', got '{field}'")
+        events = self.filter(event_type=event_type,
+                             start_time=start_time, end_time=end_time)
+        return len({e[field] for e in events})
 
-        # TODO: Call C extension
-        # result = _fastevents.unique(self._handle, field, event_type, start_time, end_time)
-        # return result
-
-        print(f"[TODO] Unique {field}")
-        return 0
-
-    def stats(self) -> EventStats:
+    def first(self,
+              event_type: Optional[str] = None,
+              user_id: Optional[int] = None) -> Optional[Event]:
         """
-        Get statistics about the event store.
+        Return the earliest matching event by timestamp, or None if no match.
+
+        When called with no filters, uses segment metadata to find the min
+        timestamp without loading any segment data, then fetches only that
+        moment — O(segments) instead of O(events).
+
+        Example:
+            db.first(event_type="purchase", user_id=123)
+        """
+        if event_type is None and user_id is None:
+            ts = self._store.min_timestamp()
+            if ts is None:
+                return None
+            events = self.filter(start_time=ts, end_time=ts)
+            return events[0] if events else None
+
+        events = self.filter(event_type=event_type, user_id=user_id)
+        return min(events, key=lambda e: e["timestamp"], default=None)
+
+    def last(self,
+             event_type: Optional[str] = None,
+             user_id: Optional[int] = None) -> Optional[Event]:
+        """
+        Return the most recent matching event by timestamp, or None if no match.
+
+        When called with no filters, uses segment metadata to find the max
+        timestamp without loading any segment data, then fetches only that
+        moment — O(segments) instead of O(events).
+
+        Example:
+            db.last(event_type="page_view")
+        """
+        if event_type is None and user_id is None:
+            ts = self._store.max_timestamp()
+            if ts is None:
+                return None
+            events = self.filter(start_time=ts, end_time=ts)
+            return events[0] if events else None
+
+        events = self.filter(event_type=event_type, user_id=user_id)
+        return max(events, key=lambda e: e["timestamp"], default=None)
+
+    def funnel(self,
+               steps: List[str],
+               within: Optional[int] = None) -> List[Dict[str, Any]]:
+        """
+        Conversion funnel analysis.
+
+        For each step, counts how many users who completed step N also went on
+        to complete step N+1 (in order). Produces a drop-off table.
+
+        Args:
+            steps:  Ordered list of event types, e.g. ["page_view", "click", "purchase"]
+            within: Optional time window in ms. If set, a user must complete
+                    the entire funnel within this duration of their first step.
 
         Returns:
-            EventStats object with store metadata
-        """
-        # TODO: Call C extension
-        # raw_stats = _fastevents.stats(self._handle)
-        # return EventStats(**raw_stats)
+            List of dicts, one per step:
+                step            — event type name
+                users           — number of users who reached this step
+                conversion_rate — fraction of step-1 users who reached this step
 
-        return EventStats(
-            total_events=0,
-            num_blocks=0,
-            memory_usage_bytes=0,
-            disk_usage_bytes=0,
-            unique_event_types=0,
-            unique_users=0
-        )
+        Example:
+            db.funnel(["page_view", "click", "purchase"], within=3_600_000)
+            # [{"step": "page_view", "users": 1000, "conversion_rate": 1.0},
+            #  {"step": "click",     "users":  450, "conversion_rate": 0.45},
+            #  {"step": "purchase",  "users":   89, "conversion_rate": 0.089}]
+        """
+        if not steps:
+            return []
 
-    def flush(self) -> None:
+        # Collect per-user timestamps for each step: uid → {step: sorted [ts]}
+        user_times: Dict[int, Dict[str, List[int]]] = {}
+        for step in steps:
+            for e in self.filter(event_type=step):
+                uid = e["user_id"]
+                user_times.setdefault(uid, {}).setdefault(step, []).append(e["timestamp"])
+        for uid in user_times:
+            for step in user_times[uid]:
+                user_times[uid][step].sort()
+
+        # entry_times[uid] = earliest timestamp at which the user entered the funnel
+        entry_times: Dict[int, int] = {}
+        for uid, steps_map in user_times.items():
+            if steps[0] in steps_map:
+                entry_times[uid] = min(steps_map[steps[0]])
+
+        first_count = len(entry_times)
+        results: List[Dict[str, Any]] = [
+            {"step": steps[0], "users": first_count, "conversion_rate": 1.0}
+        ]
+
+        for i in range(1, len(steps)):
+            curr_step = steps[i]
+            next_entry: Dict[int, int] = {}
+
+            for uid, prev_time in entry_times.items():
+                curr_times = user_times.get(uid, {}).get(curr_step, [])
+                valid = [t for t in curr_times if t >= prev_time]
+                if not valid:
+                    continue
+                curr_time = min(valid)
+                if within is not None:
+                    start_time = min(user_times[uid][steps[0]])
+                    if curr_time - start_time > within:
+                        continue
+                next_entry[uid] = curr_time
+
+            entry_times = next_entry
+            users = len(entry_times)
+            results.append({
+                "step": curr_step,
+                "users": users,
+                "conversion_rate": round(users / first_count, 4) if first_count else 0.0,
+            })
+
+        return results
+
+    def event_counts(self,
+                     start_time: Optional[int] = None,
+                     end_time: Optional[int] = None) -> Dict[str, int]:
         """
-        Flush pending writes to disk (when persistence is implemented).
+        Return the number of times each event type occurred.
+
+        Args:
+            start_time: Optional minimum timestamp
+            end_time:   Optional maximum timestamp
+
+        Returns:
+            Dict mapping event_type → count
+
+        Example:
+            db.event_counts()  # {"page_view": 5234, "click": 892}
         """
-        # TODO: Call C extension
-        # _fastevents.flush(self._handle)
-        pass
+        return self.count_by("event_type",
+                             start_time=start_time, end_time=end_time)
+
+    # ── Utilities ──────────────────────────────────────────────────────────────
+
+    def size(self) -> int:
+        """Total number of events in the store."""
+        return self._store.size()
 
     def close(self) -> None:
-        """
-        Close the event store and release resources.
-        """
-        if self._handle is not None:
-            # TODO: Call C extension
-            # _fastevents.close(self._handle)
-            self._handle = None
+        """Close the store and flush pending writes."""
+        if self._store is not None:
+            self._store.close()
+            self._store = None
 
-    def __del__(self):
-        """Ensure resources are cleaned up"""
-        self.close()
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _parse_row(row: dict) -> Event:
+    """Convert a raw C extension row dict into a typed Event dict."""
+    props = row["properties"]
+    return Event(
+        event_type=row["event_type"],
+        user_id=row["user_id"],
+        timestamp=row["timestamp"],
+        properties=json.loads(props) if props else None,
+    )

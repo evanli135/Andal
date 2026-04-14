@@ -70,6 +70,7 @@ typedef struct {
     // Metadata for query optimization
     uint64_t min_timestamp;
     uint64_t max_timestamp;
+    size_t   estimated_bytes; // running estimate of serialized size (for flush threshold)
 } EventBlock;
 
 EventBlock* create_event_block(size_t initial_capacity);
@@ -111,14 +112,10 @@ int segment_write_to_disk(Segment* seg, const char* dir);
 // Deserialize segment from disk into memory (lazy load)
 int segment_load_from_disk(Segment* seg);
 
-// Predicate type for segment_delete_where — return true for rows to delete.
-typedef bool (*RowPredicate)(uint32_t type_id, uint64_t user_id, uint64_t timestamp,
-                             const char* properties, void* ctx);
+// Read only the header from disk: populates min/max/event_count without loading EventBlock.
+// Used during event_store_open to rebuild the segment index cheaply.
+int segment_peek_metadata(Segment* seg);
 
-// Rewrite the segment file with all rows matching predicate removed.
-// Writes to a .tmp file first, then renames atomically so the original
-// is never left in a corrupt state if the process crashes mid-write.
-int segment_delete_where(Segment* seg, RowPredicate predicate, void* ctx);
 
 // ============================================================================
 // Encoding (WAL serialization)
@@ -302,6 +299,12 @@ struct EventStore {
 
     // Live staging area — events appended here before the next flush
     EventBlock* active_block;
+
+    // Auto-flush thresholds (checked after every append)
+    size_t   flush_event_threshold; // flush when active_block reaches this many events
+    size_t   flush_size_threshold;  // flush when estimated_bytes exceeds this (bytes)
+    uint64_t flush_interval_ms;     // flush when this many ms have passed since last flush
+    uint64_t last_flush_time_ms;    // wall-clock time of the last flush
 };
 
 #endif // FASTEVENTS_INTERNAL_H
