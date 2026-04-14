@@ -16,15 +16,15 @@ Columnar storage | Inverted indexes | Built in C
 
 ---
 
-## What is FastEvents?
+## What is Andal?
 
-FastEvents is a lightweight, embedded event store optimized for analytics workloads. Track user behavior, application events, and business metrics with **10-100x better performance** than traditional databases.
+Andal is a lightweight, embedded event store optimized for analytics workloads. Track user behavior, application events, and business metrics with **10-100x better performance** than traditional databases.
 
 ```python
-import fastevents
+import andal
 
 # Open or create a store
-store = fastevents.EventStore("./data")
+store = andal.EventStore("./data")
 
 # Track events
 store.append("page_view", user_id=123, properties={"page": "/pricing"})
@@ -35,7 +35,7 @@ store.append("purchase", user_id=123, properties={"amount": 99.99})
 results = store.filter(event_type="purchase", user_id=123)
 ```
 
-## Why FastEvents?
+## Why Andal?
 
 <table>
 <tr>
@@ -72,11 +72,11 @@ pip install -e .
 ### Basic Usage
 
 ```python
-import fastevents
+import andal
 from datetime import datetime
 
 # Create store
-store = fastevents.EventStore("./my_events")
+store = andal.EventStore("./my_events")
 
 # Track events
 store.append(
@@ -139,7 +139,7 @@ funnel = store.funnel(
 
 Compared to SQLite on 1M events:
 
-| Operation | SQLite | FastEvents | Speedup |
+| Operation | SQLite | Andal | Speedup |
 |-----------|--------|------------|---------|
 | Write 1M events | 60s | **1s** | **60x** |
 | Filter by type | 5s | **50ms** | **100x** |
@@ -152,7 +152,7 @@ Compared to SQLite on 1M events:
 
 ```
 ┌─────────────────────────────────────────────────┐
-│  Python API (fastevents.EventStore)             │
+│  Python API (andal.EventStore)             │
 └───────────────────┬─────────────────────────────┘
                     │
 ┌───────────────────▼─────────────────────────────┐
@@ -213,7 +213,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed design docs.
 
 ## Contributing
 
-FastEvents is in early development. Issues and PRs are welcome!
+Andal is in early development. Issues and PRs are welcome!
 
 ```bash
 # Build from source
