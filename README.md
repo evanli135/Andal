@@ -4,7 +4,7 @@
 
 **High-performance embedded event store for Python**
 
-Columnar storage | Inverted indexes | Built in C
+Columnar storage | Time-partitioned | Built in C
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
@@ -18,7 +18,7 @@ Columnar storage | Inverted indexes | Built in C
 
 ## What is Andal?
 
-Andal is a lightweight, embedded event store optimized for analytics workloads. Track user behavior, application events, and business metrics with **10-100x better performance** than traditional databases.
+Andal is a lightweight, embedded event store optimized for analytics workloads. Track user behavior, application events, and business metrics with columnar storage and efficient time-based querying.
 
 ```python
 import andal
@@ -27,9 +27,9 @@ import andal
 store = andal.EventStore("./data")
 
 # Track events
-store.append("page_view", user_id=123, properties={"page": "/pricing"})
-store.append("click", user_id=123, properties={"button": "signup"})
-store.append("purchase", user_id=123, properties={"amount": 99.99})
+store.track("page_view", user_id=123, page="/pricing")
+store.track("click", user_id=123, button="signup")
+store.track("purchase", user_id=123, amount=99.99)
 
 # Query events
 results = store.filter(event_type="purchase", user_id=123)
@@ -42,7 +42,7 @@ results = store.filter(event_type="purchase", user_id=123)
 <td width="33%">
 
 ### ⚡ **Blazing Fast**
-10-100x faster than SQLite for event queries. Columnar storage and inverted indexes eliminate unnecessary scans.
+Optimized for analytics workloads. Columnar storage and time-based partitioning for efficient scans.
 
 </td>
 <td width="33%">
@@ -78,18 +78,19 @@ from datetime import datetime
 # Create store
 store = andal.EventStore("./my_events")
 
-# Track events
-store.append(
+# Track events (kwargs become properties)
+store.track(
     event_type="user_signup",
     user_id=12345,
     timestamp=int(datetime.now().timestamp() * 1000),
-    properties='{"source": "landing_page", "plan": "pro"}'
+    source="landing_page",
+    plan="pro"
 )
 
 # Query with filters
 recent_signups = store.filter(
     event_type="user_signup",
-    start_time="-24h"
+    start_time=int((datetime.now().timestamp() - 86400) * 1000)  # 24h ago
 )
 
 # Close store
@@ -106,28 +107,46 @@ views = store.filter(event_type="page_view")
 # Filter by user
 user_events = store.filter(user_id=123)
 
-# Time range queries
-today = store.filter(start_time="-24h")
+# Time range queries (timestamps in milliseconds)
+import time
+now_ms = int(time.time() * 1000)
+day_ago = now_ms - (24 * 60 * 60 * 1000)
+today = store.filter(start_time=day_ago, end_time=now_ms)
 ```
 
-### 📊 **Aggregations** *(coming soon)*
+### 📊 **Aggregations**
 ```python
 # Count by dimension
-counts = store.count_by("event_type", since="-7d")
+counts = store.count_by("event_type")
 # => {"page_view": 15234, "click": 892, "purchase": 127}
 
 # Unique values
-unique_users = store.count_unique("user_id", since="-30d")
+unique_users = store.unique("user_id", event_type="purchase")
 # => 4523
+
+# Event counts
+event_counts = store.event_counts()
+# => {"page_view": 15234, "click": 892}
 ```
 
-### 🔄 **Funnel Analysis** *(coming soon)*
+### 🔄 **Funnel Analysis**
 ```python
 # Conversion funnels
 funnel = store.funnel(
     steps=["page_view", "add_to_cart", "purchase"],
-    within="1h"
+    within=3_600_000  # 1 hour in milliseconds
 )
+# => [{"step": "page_view", "users": 1000, "conversion_rate": 1.0},
+#     {"step": "add_to_cart", "users": 120, "conversion_rate": 0.12},
+#     {"step": "purchase", "users": 24, "conversion_rate": 0.024}]
+```
+
+### 🎯 **First/Last Queries**
+```python
+# Get first/last events efficiently
+first_event = store.first()  # O(segments), not O(events)
+last_event = store.last()
+first_purchase = store.first(event_type="purchase", user_id=123)
 ```
 
 ### 💾 **Durable & Crash-Safe**
@@ -137,16 +156,23 @@ funnel = store.funnel(
 
 ## Benchmarks
 
-Compared to SQLite on 1M events:
+*Note: Comprehensive benchmarks pending. Current performance characteristics:*
 
-| Operation | SQLite | Andal | Speedup |
-|-----------|--------|------------|---------|
-| Write 1M events | 60s | **1s** | **60x** |
-| Filter by type | 5s | **50ms** | **100x** |
-| Count by field | 10s | **100ms** | **100x** |
-| Memory usage (10M events) | 500MB | **50MB** | **10x less** |
+**Write Performance:**
+- WAL-buffered writes: ~100K+ events/sec (in-memory)
+- Auto-flush at 10K events or 4MB threshold
+- Segment write: <100ms for 10K events
 
-*Benchmarks run on Apple M1, single-threaded. Your mileage may vary.*
+**Query Performance:**
+- Linear scan filtering (no indexes yet)
+- Partition pruning via time-range metadata
+- Lazy segment loading reduces memory footprint
+
+**Memory:**
+- ~28 bytes/event in-memory (columnar arrays)
+- Segments unloaded after query to conserve memory
+
+*Full benchmarks vs SQLite/DuckDB coming soon.*
 
 ## Architecture
 
@@ -169,7 +195,7 @@ Compared to SQLite on 1M events:
 │  ├── wal.log (durability)                       │
 │  ├── seg_00001.dat (columnar data)              │
 │  ├── seg_00002.dat                              │
-│  └── metadata.json                              │
+│  └── event_types.txt                            │
 └─────────────────────────────────────────────────┘
 ```
 
@@ -177,7 +203,7 @@ Compared to SQLite on 1M events:
 - **Columnar Storage**: Each field in separate arrays for cache-efficient scans
 - **Immutable Segments**: Write-once files, easy to reason about
 - **Time Partitioning**: Binary search prunes irrelevant data
-- **Delta Encoding**: Timestamps compressed 4-8x
+- **Crash Recovery**: WAL ensures no data loss
 
 ## Use Cases
 
@@ -191,39 +217,53 @@ Compared to SQLite on 1M events:
 
 **Current Status**: Alpha (Active Development)
 
+**Core C Engine:**
 - ✅ Core columnar storage (EventBlock)
 - ✅ Write-ahead log (WAL) with durability
 - ✅ Segment persistence to disk
-- ✅ Basic filtering queries
-- ✅ String dictionary encoding
-- 🚧 Inverted indexes (in progress)
-- 🚧 Time-based partitioning (in progress)
-- ⏳ Aggregation queries (planned)
+- ✅ Crash recovery and segment scanning
+- ✅ String dictionary encoding with persistence
+- ✅ Basic filtering queries (event_type, user_id, time range)
+- ✅ Time-based partition index (query pruning)
+- ✅ Lazy segment loading/unloading
+- ⏳ Inverted indexes (planned - currently linear scan)
 - ⏳ Compression (delta + LZ4) (planned)
+
+**Python API:**
+- ✅ Full Python bindings via C extension
+- ✅ High-level `track()` API with kwargs→properties
+- ✅ Filter queries with result parsing
+- ✅ Aggregations: `count_by()`, `unique()`, `event_counts()`
+- ✅ Funnel analysis with time windows
+- ✅ First/last queries with metadata optimization
 - ⏳ Python packaging (planned)
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed design docs.
 
 ## Performance Tips
 
-1. **Batch writes**: Append multiple events before querying
-2. **Time filters**: Always include time ranges when possible
-3. **Flush periodically**: Call `store.flush()` to write segments to disk
-4. **Close gracefully**: Always call `store.close()` to ensure durability
+1. **Use context managers**: `with EventStore(...) as store:` ensures proper cleanup
+2. **Time filters help**: Include time ranges to leverage partition pruning
+3. **Auto-flush works**: Default threshold is 10K events - manual `flush()` rarely needed
+4. **Properties as kwargs**: `track("click", user_id=1, btn="x")` is cleaner than JSON strings
 
 ## Contributing
 
 Andal is in early development. Issues and PRs are welcome!
 
 ```bash
-# Build from source
+# Build and test C core
 make clean
-make test
+make test           # Runs all C tests (wal, disk, store)
 
-# Run all tests
-make test-stringdict
-make test-eventblock
-make test-wal
+# Test Python bindings
+make python         # Build Python extension
+python tests/test_store_python.py
+
+# Individual test targets
+make test-wal       # WAL durability tests
+make test-disk      # Segment serialization tests
+make test-store     # Full integration tests
 ```
 
 ## License
