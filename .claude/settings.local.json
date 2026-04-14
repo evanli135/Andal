@@ -34,7 +34,8 @@
       "Bash(/c/msys64/ucrt64/bin/python3 -c \"import sys; sys.path.insert\\(0,'.'\\); sys.path.insert\\(0,'python'\\); from fastevents.store import EventStore; import tempfile,shutil; d=tempfile.mkdtemp\\(\\); db=EventStore\\(d\\); T=1000000000000; [db.track\\('ev',user_id=1,timestamp=T+i*1000\\) or db.flush\\(\\) for i in range\\(20\\)]; print\\('size=%d'%db.size\\(\\)\\); print\\('filter=%d'%len\\(db.filter\\(\\)\\)\\); db.close\\(\\); shutil.rmtree\\(d\\)\")",
       "Bash(python3 probe_bugs.py)",
       "Bash(python3 -c ':*)",
-      "Bash(echo \"EXIT: $?\")"
+      "Bash(echo \"EXIT: $?\")",
+      "Bash(make test-stringdict *)"
     ]
   }
 }
