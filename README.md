@@ -48,6 +48,38 @@ Andal is a fast, embedded event store built for analytics. Store millions of eve
 <tr>
 <td width="50%">
 
+### Serverless & Embedded
+
+No separate server process. No configuration files. No Docker containers. Just a Python import and a file path.
+
+Perfect for applications, scripts, notebooks, and edge devices. Your data stays local.
+
+</td>
+<td width="50%">
+
+```python
+import andal
+
+# That's it. No server to start.
+# No connection strings.
+# No authentication setup.
+
+store = andal.EventStore("./data")
+
+# Works in Jupyter notebooks
+# Works in Flask apps
+# Works in CLI scripts
+# Works anywhere Python runs
+```
+
+</td>
+</tr>
+</table>
+
+<table>
+<tr>
+<td width="50%">
+
 ### Columnar Storage
 
 Events are stored in columnar format — each field (timestamps, user IDs, event types) lives in its own array. This makes filtering and aggregations extremely cache-friendly.
@@ -240,6 +272,148 @@ events = store.filter(
 </td>
 </tr>
 </table>
+
+---
+
+## Python API
+
+### Opening a Store
+
+```python
+import andal
+
+# Open or create a store
+store = andal.EventStore("./my_events")
+
+# Use as context manager (recommended)
+with andal.EventStore("./my_events") as store:
+    store.track("event", user_id=1)
+    # Automatically closed and flushed
+```
+
+### Tracking Events
+
+```python
+# Basic event tracking
+store.track("page_view", user_id=123)
+
+# With timestamp (milliseconds since epoch)
+import time
+now_ms = int(time.time() * 1000)
+store.track("click", user_id=123, timestamp=now_ms)
+
+# With properties (kwargs become JSON properties)
+store.track(
+    "purchase",
+    user_id=123,
+    timestamp=now_ms,
+    amount=99.99,
+    currency="USD",
+    product_id="prod_123"
+)
+```
+
+### Filtering Events
+
+```python
+# Filter by event type
+purchases = store.filter(event_type="purchase")
+
+# Filter by user
+user_events = store.filter(user_id=123)
+
+# Filter by time range
+recent = store.filter(
+    start_time=day_ago_ms,
+    end_time=now_ms
+)
+
+# Combine filters
+recent_purchases = store.filter(
+    event_type="purchase",
+    user_id=123,
+    start_time=day_ago_ms
+)
+
+# Results are lists of event dictionaries
+for event in recent_purchases:
+    print(event["event_type"])    # "purchase"
+    print(event["user_id"])        # 123
+    print(event["timestamp"])      # 1710000000000
+    print(event["properties"])     # {"amount": 99.99, ...}
+```
+
+### Aggregations
+
+```python
+# Count events by dimension
+event_counts = store.count_by("event_type")
+# {"page_view": 5234, "click": 892, "purchase": 127}
+
+user_counts = store.count_by("user_id", event_type="purchase")
+# {123: 5, 456: 3, 789: 12}
+
+# Count unique values
+unique_users = store.unique("user_id")
+# 4523
+
+unique_purchasers = store.unique("user_id", event_type="purchase")
+# 89
+
+# Get all event type counts
+all_counts = store.event_counts()
+# {"page_view": 5234, "click": 892, "purchase": 127}
+```
+
+### Funnel Analysis
+
+```python
+# Track conversion through multiple steps
+funnel = store.funnel(
+    steps=["page_view", "add_to_cart", "purchase"],
+    within=3_600_000  # Users must complete within 1 hour
+)
+
+# Returns conversion at each step
+# [
+#   {"step": "page_view", "users": 1000, "conversion_rate": 1.0},
+#   {"step": "add_to_cart", "users": 120, "conversion_rate": 0.12},
+#   {"step": "purchase", "users": 24, "conversion_rate": 0.024}
+# ]
+
+# Without time window (users can take any amount of time)
+funnel = store.funnel(steps=["signup", "first_purchase"])
+```
+
+### First/Last Queries
+
+```python
+# Get earliest event (optimized with metadata)
+first = store.first()
+first_purchase = store.first(event_type="purchase")
+first_user_event = store.first(user_id=123)
+
+# Get most recent event
+last = store.last()
+last_error = store.last(event_type="error")
+
+# These use segment metadata for O(segments) performance
+# instead of O(events) when no filters are specified
+```
+
+### Utilities
+
+```python
+# Get total event count
+count = store.size()
+# 15234
+
+# Force flush to disk (usually not needed - auto-flushes at 10K events)
+store.flush()
+
+# Close store (flushes pending writes)
+store.close()
+```
 
 ---
 
