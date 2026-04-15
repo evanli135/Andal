@@ -44,23 +44,50 @@ store.close()
 
 Andal is a fast, embedded event store built for analytics. Store millions of events and query them efficiently without setting up a database server.
 
+<table>
+<tr>
+<td width="50%">
+
 ### Columnar Storage
 
 Events are stored in columnar format — each field (timestamps, user IDs, event types) lives in its own array. This makes filtering and aggregations extremely cache-friendly.
 
+Reading only the columns you need is 10x faster than reading entire rows.
+
+</td>
+<td width="50%">
+
 ```python
 # Each field stored separately for fast scans
-event_type_ids: [0, 1, 0, 2, 0, ...]    # Dictionary-encoded
-user_ids:       [123, 456, 123, ...]     # Raw integers
-timestamps:     [1000, 1001, 1002, ...]  # Milliseconds
-properties:     ['{"page": "/home"}', ...] # JSON strings
+event_type_ids: [0, 1, 0, 2, 0, ...]
+# Dictionary-encoded
+
+user_ids: [123, 456, 123, ...]
+# Raw integers
+
+timestamps: [1000, 1001, 1002, ...]
+# Milliseconds
+
+properties: ['{"page": "/home"}', ...]
+# JSON strings
 ```
 
-**Why it matters**: Reading only the columns you need is 10x faster than reading entire rows.
+</td>
+</tr>
+</table>
+
+<table>
+<tr>
+<td width="50%">
 
 ### Time-Based Filtering
 
 Filter events by type, user, or time range. The partition index prunes irrelevant segments without loading them into memory.
+
+Query only the time ranges you care about. Old segments stay on disk.
+
+</td>
+<td width="50%">
 
 ```python
 import time
@@ -71,78 +98,148 @@ views = store.filter(event_type="page_view")
 # Filter by user
 user_events = store.filter(user_id=123)
 
-# Time range queries (timestamps in milliseconds)
+# Time range queries
 now_ms = int(time.time() * 1000)
 day_ago = now_ms - (24 * 60 * 60 * 1000)
-today = store.filter(start_time=day_ago, end_time=now_ms)
+recent = store.filter(
+    start_time=day_ago,
+    end_time=now_ms
+)
 ```
 
-**Why it matters**: Query only the time ranges you care about. Old segments stay on disk.
+</td>
+</tr>
+</table>
+
+<table>
+<tr>
+<td width="50%">
 
 ### Built-In Aggregations
 
 Count, group, and analyze events without writing complex SQL.
 
+Get insights in one line of code. No GROUP BY, no CTEs, no headaches.
+
+</td>
+<td width="50%">
+
 ```python
 # Count by dimension
 counts = store.count_by("event_type")
-# => {"page_view": 15234, "click": 892, "purchase": 127}
+# {"page_view": 15234, "click": 892}
 
 # Unique values
-unique_users = store.unique("user_id", event_type="purchase")
-# => 4523
+unique_users = store.unique(
+    "user_id",
+    event_type="purchase"
+)
+# 4523
 
-# Event counts over time
+# Event counts
 event_counts = store.event_counts()
-# => {"page_view": 15234, "click": 892}
+# {"page_view": 15234, "click": 892}
 ```
 
-**Why it matters**: Get insights in one line of code. No GROUP BY, no CTEs.
+</td>
+</tr>
+</table>
+
+<table>
+<tr>
+<td width="50%">
 
 ### Funnel Analysis
 
 Track user journeys through multi-step flows. Perfect for conversion analysis.
 
+Understand drop-off points in user flows without joining tables or writing complex queries.
+
+</td>
+<td width="50%">
+
 ```python
-# How many users go from view → cart → purchase?
+# How many users convert?
 funnel = store.funnel(
-    steps=["page_view", "add_to_cart", "purchase"],
-    within=3_600_000  # 1 hour in milliseconds
+    steps=[
+        "page_view",
+        "add_to_cart",
+        "purchase"
+    ],
+    within=3_600_000  # 1 hour
 )
 
-# Results:
-# [{"step": "page_view", "users": 1000, "conversion_rate": 1.0},
-#  {"step": "add_to_cart", "users": 120, "conversion_rate": 0.12},
-#  {"step": "purchase", "users": 24, "conversion_rate": 0.024}]
+# [{"step": "page_view",
+#   "users": 1000,
+#   "conversion_rate": 1.0},
+#  {"step": "add_to_cart",
+#   "users": 120,
+#   "conversion_rate": 0.12}, ...]
 ```
 
-**Why it matters**: Understand drop-off points in user flows without joining tables.
+</td>
+</tr>
+</table>
+
+<table>
+<tr>
+<td width="50%">
 
 ### Crash-Safe Durability
 
 Write-ahead log (WAL) ensures no data loss. If your process crashes, Andal recovers all unflushed events on restart.
 
+Your data survives crashes and power loss. No silent data loss, ever.
+
+</td>
+<td width="50%">
+
 ```python
-store.track("payment_received", user_id=123, amount=99.99)
-# ✓ Event is durable immediately (written to WAL)
-# ✓ Even if process crashes before flush
+store.track(
+    "payment_received",
+    user_id=123,
+    amount=99.99
+)
+
+# ✓ Event is durable immediately
+#   (written to WAL)
+# ✓ Survives process crashes
 # ✓ Recovered on next open
 ```
 
-**Why it matters**: Your data survives crashes and power loss. No silent data loss.
+</td>
+</tr>
+</table>
+
+<table>
+<tr>
+<td width="50%">
 
 ### Lazy Loading
 
 Segments are loaded from disk only when queried, then unloaded to conserve memory.
 
+Handle datasets larger than RAM. Memory footprint stays small even with millions of events.
+
+</td>
+<td width="50%">
+
 ```python
-# Query spans 100 segments, but only matching ones are loaded
-events = store.filter(event_type="purchase", start_time=last_month)
-# → Loads 3 segments that contain purchases in that time range
+# Query spans 100 segments,
+# but only matching ones are loaded
+events = store.filter(
+    event_type="purchase",
+    start_time=last_month
+)
+
+# → Loads 3 segments that contain
+#   purchases in that time range
 # → Other 97 segments stay on disk
 ```
 
-**Why it matters**: Handle datasets larger than RAM. Memory footprint stays small.
+</td>
+</tr>
+</table>
 
 ---
 
