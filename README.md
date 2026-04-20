@@ -2,7 +2,12 @@
 
 # ⚡ Andal
 
-**High-performance embedded event store for Python**
+# Andal
+
+**`pip install andal` — then forget about your analytics infrastructure.**
+
+Andal is an embedded event store for Python. Track events, query them, 
+run funnels and aggregations — no server, no config, no ops.
 
 Columnar storage | Time-partitioned | Embedded/Serverless | Built in C 
 
@@ -12,7 +17,6 @@ Columnar storage | Time-partitioned | Embedded/Serverless | Built in C
 
 </div>
 
-Andal is a lightweight, embedded event store optimized for analytics workloads. Track user behavior, application events, and business metrics with columnar storage and efficient time-based querying.
 
 ## Quick Start
 
