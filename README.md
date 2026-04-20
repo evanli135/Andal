@@ -2,17 +2,21 @@
 
 # ⚡ Andal
 
-**High-performance embedded event store for Python**
-
-Columnar storage | Time-partitioned | Embedded/Serverless | Built in C 
-
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![Status](https://img.shields.io/badge/status-alpha-orange.svg)]()
 
+No Server | No SQL | No Config
+
+**`pip install andal` — then forget about your analytics infrastructure.**
+
+SQLite for events — embedded, columnar, zero ops.
+
+Andal is an embedded event store for Python. Track events, query them,
+run funnels and aggregations — all from a simple Python API, no SQL required.
+
 </div>
 
-Andal is a lightweight, embedded event store optimized for analytics workloads. Track user behavior, application events, and business metrics with columnar storage and efficient time-based querying.
 
 ## Quick Start
 
