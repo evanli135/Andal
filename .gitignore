@@ -35,7 +35,10 @@ htmlcov/
 # Build artifacts
 src/*.o
 src/*.a
-python/fastevents_module*.so
+*.pyd
+*.so
+andal/*.pyd
+andal/*.so
 test_storage
 *.db
 *.log
