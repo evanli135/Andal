@@ -50,16 +50,14 @@ Andal is a fast, embedded event store built for analytics. Store millions of eve
 
 <table>
 <tr>
-<td width="50%">
+<td width="30%">
 
 ### Up and running in 30 seconds
 
-No Postgres to spin up. No Docker container. No connection string to configure. Open a file path and start tracking — Andal creates everything it needs on first run.
-
-Works in a Jupyter notebook, a Flask app, a CLI script, a Lambda function. Anywhere Python runs, Andal runs.
+No server. No Docker. No config. Open a file path and start tracking — works in notebooks, Flask apps, Lambda functions, anywhere Python runs.
 
 </td>
-<td width="50%">
+<td width="70%">
 
 ```python
 from andal import EventStore
@@ -71,7 +69,7 @@ store.track("signup", user_id=1)
 store.track("purchase", user_id=1, amount=49.99)
 store.track("churn", user_id=2)
 
-# That's it. Data is on disk.
+# Data is on disk. Nothing else required.
 ```
 
 </td>
@@ -80,19 +78,17 @@ store.track("churn", user_id=2)
 
 <table>
 <tr>
-<td width="50%">
+<td width="30%">
 
 ### Analytics without SQL
 
-No GROUP BY. No CTEs. No JOINs. Answer the questions you actually care about — conversion rates, user counts, event breakdowns — in one line of Python.
-
-Built-in funnel analysis, aggregations, and filtering. The queries you'd spend an afternoon writing in SQL are one method call.
+Funnels, aggregations, and filters in one line of Python. No GROUP BY, no JOINs, no headaches.
 
 </td>
-<td width="50%">
+<td width="70%">
 
 ```python
-# Who's converting?
+# Conversion funnel
 store.funnel(["page_view", "signup", "purchase"])
 # page_view  → 10,000 users
 # signup     → 1,200  (12%)
@@ -102,9 +98,8 @@ store.funnel(["page_view", "signup", "purchase"])
 store.count_by("event_type", since="24h")
 # {"page_view": 8432, "signup": 91}
 
-# How many unique users this week?
-store.unique("user_id", since="7d")
-# 4,891
+# Unique users this week
+store.unique("user_id", since="7d")  # 4,891
 ```
 
 </td>
@@ -113,30 +108,26 @@ store.unique("user_id", since="7d")
 
 <table>
 <tr>
-<td width="50%">
+<td width="30%">
 
 ### Built for events, not rows
 
-Traditional databases store the current state of things. Andal stores what *happened* — and never throws it away. Every event is timestamped, immutable, and queryable forever.
-
-Ask questions you can't ask a regular database: "What did this user do before churning?" "When did we first see this error?" "What's the pattern leading up to a purchase?"
+Every event is timestamped and immutable. Ask questions a regular database can't answer — full user histories, pre-crash sequences, pattern analysis.
 
 </td>
-<td width="50%">
+<td width="70%">
 
 ```python
-# Replay everything a user ever did
+# Everything a user ever did
 store.filter(user_id=123)
 
-# Find all errors in the last hour
+# All errors in the last hour
 store.filter(event_type="error", since="1h")
 
 # What happened before this crash?
-store.filter(
-    user_id=123,
-    end_time=crash_timestamp
-)
-# Full history. Nothing deleted.
+store.filter(user_id=123, end_time=crash_timestamp)
+
+# Full history. Nothing deleted. Ever.
 ```
 
 </td>
@@ -145,66 +136,30 @@ store.filter(
 
 <table>
 <tr>
-<td width="50%">
+<td width="30%">
 
 ### Your data survives crashes
 
-Andal writes events to a write-ahead log before anything else. If your process dies mid-write, the data isn't lost — it's recovered automatically the next time you open the store.
-
-No silent data loss. No corrupt state. Just open the store and keep going.
+Events hit a write-ahead log before anything else. If your process dies, data is recovered automatically on next open.
 
 </td>
-<td width="50%">
+<td width="70%">
 
 ```python
-store.track("payment_confirmed", 
-            order_id="ORD-123",
-            amount=99.99)
+store.track("payment_confirmed", order_id="ORD-123", amount=99.99)
 
 # Process crashes here.
 
 # On restart:
 store = EventStore("./my_app")
-# ✓ payment_confirmed recovered
+# ✓ payment_confirmed is recovered
 # ✓ No data loss
-# ✓ No manual recovery needed
+# ✓ No manual recovery steps
 ```
 
 </td>
 </tr>
 </table>
-
-<table>
-<tr>
-<td width="50%">
-
-### Scales with your data, not your ops budget
-
-Query millions of events without loading them all into memory. Time-range queries skip over months of old data instantly. Results come back fast whether you have 10,000 events or 10,000,000.
-
-No infrastructure to scale. No cluster to manage. Just a directory of files that grows as your data grows.
-
-</td>
-<td width="50%">
-
-```python
-# Fast even at scale
-store.filter(
-    event_type="purchase",
-    since="30d"       # skips older data entirely
-)
-
-# Works on a laptop
-# Works in a Lambda with 128MB RAM
-# Works with years of event history
-
-# No infra changes as you grow.
-```
-
-</td>
-</tr>
-</table>
-
 ---
 
 ## Python API
