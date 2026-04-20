@@ -2,10 +2,18 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
-#include <sys/stat.h>
 #include <time.h>
-#include <dirent.h>
 #include "internal.h"
+
+#ifdef _WIN32
+#  include <windows.h>
+#  include <direct.h>
+#  define make_dir(p) _mkdir(p)
+#else
+#  include <sys/stat.h>
+#  include <dirent.h>
+#  define make_dir(p) mkdir(p, 0755)
+#endif
 
 #define FLUSH_EVENT_THRESHOLD  10000          // events
 #define FLUSH_SIZE_THRESHOLD   (4 * 1024 * 1024) // 4 MB
@@ -95,16 +103,47 @@ static int persist_dict(EventStore* store) {
 // segment index. Called once during event_store_open so queries after a
 // close/reopen see all previously flushed segments.
 static int scan_and_register_segments(EventStore* store) {
+    uint64_t max_seg_id = 0;
+
+#ifdef _WIN32
+    char pattern[MAX_PATH];
+    snprintf(pattern, sizeof(pattern), "%s\\seg_*.dat", store->db_path);
+
+    WIN32_FIND_DATAA fd;
+    HANDLE h = FindFirstFileA(pattern, &fd);
+    if (h == INVALID_HANDLE_VALUE) return FE_OK;  // no segments yet
+
+    do {
+        unsigned long long raw_id;
+        if (sscanf(fd.cFileName, "seg_%llu.dat", &raw_id) != 1) continue;
+
+        uint64_t seg_id = (uint64_t)raw_id;
+        char* path = build_segment_path(store->db_path, seg_id);
+        if (!path) { FindClose(h); return FE_OUT_OF_MEMORY; }
+
+        Segment* seg = calloc(1, sizeof(Segment));
+        if (!seg) { free(path); FindClose(h); return FE_OUT_OF_MEMORY; }
+        seg->segment_id = seg_id;
+        seg->file_path  = path;
+
+        if (segment_peek_metadata(seg) != FE_OK) { segment_destroy(seg); continue; }
+
+        int err = grow_segments_array(store);
+        if (err != FE_OK) { segment_destroy(seg); FindClose(h); return err; }
+
+        register_segment(store, seg);
+        if (seg_id > max_seg_id) max_seg_id = seg_id;
+    } while (FindNextFileA(h, &fd));
+
+    FindClose(h);
+#else
     DIR* dir = opendir(store->db_path);
     if (!dir) return FE_OK;  // fresh store with no directory yet is fine
 
-    uint64_t max_seg_id = 0;
     struct dirent* entry;
-
     while ((entry = readdir(dir)) != NULL) {
         unsigned long long raw_id;
-        if (sscanf(entry->d_name, "seg_%llu.dat", &raw_id) != 1)
-            continue;
+        if (sscanf(entry->d_name, "seg_%llu.dat", &raw_id) != 1) continue;
 
         uint64_t seg_id = (uint64_t)raw_id;
         char* path = build_segment_path(store->db_path, seg_id);
@@ -115,11 +154,7 @@ static int scan_and_register_segments(EventStore* store) {
         seg->segment_id = seg_id;
         seg->file_path  = path;
 
-        if (segment_peek_metadata(seg) != FE_OK) {
-            // Skip corrupt or unreadable segment files
-            segment_destroy(seg);
-            continue;
-        }
+        if (segment_peek_metadata(seg) != FE_OK) { segment_destroy(seg); continue; }
 
         int err = grow_segments_array(store);
         if (err != FE_OK) { segment_destroy(seg); closedir(dir); return err; }
@@ -129,6 +164,7 @@ static int scan_and_register_segments(EventStore* store) {
     }
 
     closedir(dir);
+#endif
 
     if (max_seg_id >= store->next_segment_id)
         store->next_segment_id = max_seg_id + 1;
@@ -139,7 +175,7 @@ static int scan_and_register_segments(EventStore* store) {
 EventStore* event_store_open(const char* db_path) {
     if (!db_path) return NULL;
 
-    mkdir(db_path);
+    make_dir(db_path);
 
     EventStore* store = malloc(sizeof(EventStore));
     if (!store) return NULL;

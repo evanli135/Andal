@@ -3,15 +3,15 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <fcntl.h>
-#include <unistd.h>
 #include <string.h>
 #include "wal.h"
 
 #ifdef _WIN32
-#include <io.h>
-#define datasync(fd) _commit(fd)
+#  include <io.h>
+#  define datasync(fd) _commit(fd)
 #else
-#define datasync(fd) fdatasync(fd)
+#  include <unistd.h>
+#  define datasync(fd) fdatasync(fd)
 #endif
 
 // Map WAL error codes to storage error codes for compatibility

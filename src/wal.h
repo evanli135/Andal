@@ -5,6 +5,12 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+// ssize_t is POSIX-only; define it for MSVC.
+#ifdef _WIN32
+#  include <BaseTsd.h>
+typedef SSIZE_T ssize_t;
+#endif
+
 // Error codes (same as storage.h)
 typedef enum {
     WAL_OK = 0,

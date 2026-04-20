@@ -1,7 +1,7 @@
 """
-High-level Python API for FastEvents.
+High-level Python API for Andal.
 
-Wraps the _fastevents C extension with a Pythonic interface:
+Wraps the _andal C extension with a Pythonic interface:
 - track() instead of append() to match analytics terminology
 - **properties kwargs instead of a raw JSON string
 - filter() returns proper Event dicts with parsed properties
@@ -12,7 +12,7 @@ import json
 import time
 from typing import Any, Dict, List, Optional
 
-import _fastevents
+from . import _andal
 from .types import Event
 
 
@@ -27,7 +27,7 @@ class EventStore:
     """
 
     def __init__(self, db_path: str):
-        self._store = _fastevents.EventStore(db_path)
+        self._store = _andal.EventStore(db_path)
 
     def __enter__(self):
         return self

@@ -3,7 +3,7 @@ Basic usage example for Fast Event Store
 """
 
 import time
-from fastevents import EventStore
+from andal import EventStore
 
 
 def main():
@@ -18,6 +18,7 @@ def main():
         db.track("click", user_id=123, button="signup", timestamp=now + 2000)
         db.track("page_view", user_id=456, page="/home", timestamp=now + 3000)
         db.track("click", user_id=456, button="login", timestamp=now + 4000)
+
 
         print("\nFiltering events...")
         # Get all page views
@@ -41,10 +42,6 @@ def main():
         unique_users = db.unique("user_id", event_type="page_view")
         print(f"Unique users with page views: {unique_users}")
 
-        print("\nStats...")
-        stats = db.stats()
-        print(f"Total events: {stats.total_events}")
-        print(f"Memory usage: {stats.memory_usage_bytes / 1024:.2f} KB")
 
 
 if __name__ == "__main__":

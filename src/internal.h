@@ -8,6 +8,13 @@
 #ifndef FASTEVENTS_INTERNAL_H
 #define FASTEVENTS_INTERNAL_H
 
+// ssize_t is POSIX-only; MSVC doesn't define it.
+#ifdef _WIN32
+#  include <stddef.h>
+#  include <BaseTsd.h>
+typedef SSIZE_T ssize_t;
+#endif
+
 #include "fastevents.h"
 #include "wal.h"
 

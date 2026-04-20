@@ -262,7 +262,7 @@ static PyMethodDef pystore_methods[] = {
 
 static PyTypeObject PyEventStoreType = {
     PyVarObject_HEAD_INIT(NULL, 0)
-    .tp_name      = "_fastevents.EventStore",
+    .tp_name      = "_andal.EventStore",
     .tp_basicsize = sizeof(PyEventStore),
     .tp_new       = pystore_new,
     .tp_init      = (initproc)pystore_init,
@@ -276,17 +276,17 @@ static PyTypeObject PyEventStoreType = {
 // Module definition
 // ============================================================================
 
-static PyModuleDef fastevents_module = {
+static PyModuleDef andal_module = {
     PyModuleDef_HEAD_INIT,
-    .m_name = "_fastevents",
-    .m_doc  = "FastEvents — embedded columnar event store (internal C extension).",
+    .m_name = "_andal",
+    .m_doc  = "Andal — embedded columnar event store (internal C extension).",
     .m_size = -1,
 };
 
-PyMODINIT_FUNC PyInit__fastevents(void) {
+PyMODINIT_FUNC PyInit__andal(void) {
     if (PyType_Ready(&PyEventStoreType) < 0) return NULL;
 
-    PyObject* m = PyModule_Create(&fastevents_module);
+    PyObject* m = PyModule_Create(&andal_module);
     if (!m) return NULL;
 
     Py_INCREF(&PyEventStoreType);

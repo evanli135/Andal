@@ -35,7 +35,27 @@
       "Bash(python3 probe_bugs.py)",
       "Bash(python3 -c ':*)",
       "Bash(echo \"EXIT: $?\")",
-      "Bash(make test-stringdict *)"
+      "Bash(make test-stringdict *)",
+      "Bash(ls *.md)",
+      "Bash(mkdir -p fastevents)",
+      "Bash(cp python/fastevents/__init__.py fastevents/__init__.py)",
+      "Bash(cp python/fastevents/store.py fastevents/store.py)",
+      "Bash(cp python/fastevents/types.py fastevents/types.py)",
+      "Bash(ls *)",
+      "Bash(TMPDIR=/tmp pip install -e .)",
+      "Bash(TMPDIR=/tmp python setup.py build_ext --inplace --compiler=mingw32)",
+      "Bash(TMPDIR=/tmp python3 setup.py build_ext --inplace --compiler=mingw32)",
+      "Bash(TMPDIR=/tmp /c/Users/evanl/AppData/Local/Programs/Python/Python312/python.exe setup.py build_ext --inplace --compiler=mingw32)",
+      "Bash(/c/Users/evanl/AppData/Local/Programs/Python/Python312/python.exe -m pytest tests/test_store_python.py -v)",
+      "Bash(make test_disk)",
+      "Bash(/c/msys64/ucrt64/bin/make test-disk *)",
+      "Bash(/c/msys64/usr/bin/make test-disk *)",
+      "Bash(TEMP=/tmp TMPDIR=/tmp /c/msys64/usr/bin/make test-disk *)",
+      "Bash(/c/Users/evanl/AppData/Local/Programs/Python/Python312/python.exe -m pip install build)",
+      "Bash(py -m build)",
+      "Bash(grep *)",
+      "Bash(/c/Users/evanl/AppData/Local/Programs/Python/Python312/python.exe -m pytest tests/test_store_python.py -q)",
+      "Bash(unzip -p dist/andal-0.1.0-cp312-cp312-win_amd64.whl andal-0.1.0.dist-info/METADATA)"
     ]
   }
 }

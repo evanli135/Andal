@@ -1,25 +1,24 @@
 #define SEG_MAGIC "EVTSEG\0\0"
-#define SEG_VERSION 1
+#define SEG_VERSION 2
 
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <fcntl.h>
-#include <unistd.h>
 #include <stdio.h>
-#include <sys/stat.h>
+
+#ifdef _WIN32
+#  include <io.h>
+#  define datasync(fd) _commit(fd)
+#else
+#  include <unistd.h>
+#  include <sys/stat.h>
+#  define datasync(fd) fdatasync(fd)
+#endif
 
 // O_BINARY is a MinGW/Windows extension; on POSIX it doesn't exist
 #ifndef O_BINARY
 #define O_BINARY 0
-#endif
-
-// fdatasync isn't available on MinGW; _commit from <io.h> is equivalent
-#ifdef _WIN32
-#include <io.h>
-#define datasync(fd) _commit(fd)
-#else
-#define datasync(fd) fdatasync(fd)
 #endif
 
 #include "internal.h"
@@ -34,10 +33,69 @@ typedef struct {
     uint64_t offset_type_ids;
     uint64_t offset_user_ids;
     uint64_t offset_timestamps;
+    uint64_t ts_compressed_size;  // byte length of delta+varint encoded timestamp column
     uint64_t offset_prop_index;
     uint64_t offset_prop_heap;
     uint64_t prop_heap_size;
 } SegmentHeader;
+
+// ── Varint (LEB128) helpers ───────────────────────────────────────────────────
+
+// Encode val as LEB128 into buf. Returns bytes written (1–10).
+static size_t varint_encode(uint8_t* buf, uint64_t val) {
+    size_t n = 0;
+    do {
+        uint8_t byte = val & 0x7F;
+        val >>= 7;
+        if (val) byte |= 0x80;
+        buf[n++] = byte;
+    } while (val);
+    return n;
+}
+
+// Decode one LEB128 value from buf[0..avail). Returns bytes consumed, 0 on truncation.
+static size_t varint_decode(const uint8_t* buf, size_t avail, uint64_t* out) {
+    uint64_t val = 0;
+    for (size_t i = 0; i < avail && i < 10; i++) {
+        val |= (uint64_t)(buf[i] & 0x7F) << (7 * i);
+        if (!(buf[i] & 0x80)) { *out = val; return i + 1; }
+    }
+    return 0;
+}
+
+// ── Timestamp compression ─────────────────────────────────────────────────────
+
+// Delta-encode then varint-compress timestamps. Returns heap buffer; caller must free.
+static uint8_t* timestamps_compress(const uint64_t* ts, size_t n, size_t* out_size) {
+    uint8_t* buf = malloc(n * 10);  // worst case: 10 bytes per varint
+    if (!buf) return NULL;
+
+    size_t cursor = 0;
+    uint64_t prev = 0;
+    for (size_t i = 0; i < n; i++) {
+        cursor += varint_encode(buf + cursor, ts[i] - prev);
+        prev = ts[i];
+    }
+
+    *out_size = cursor;
+    return buf;
+}
+
+// Reverse of timestamps_compress: decode varint deltas back into absolute timestamps.
+static int timestamps_decompress(const uint8_t* buf, size_t buf_size,
+                                 uint64_t* ts, size_t n) {
+    size_t cursor = 0;
+    uint64_t prev = 0;
+    for (size_t i = 0; i < n; i++) {
+        uint64_t delta;
+        size_t consumed = varint_decode(buf + cursor, buf_size - cursor, &delta);
+        if (!consumed) return FE_CORRUPT_DATA;
+        cursor += consumed;
+        ts[i] = prev + delta;
+        prev = ts[i];
+    }
+    return FE_OK;
+}
 
 // ── I/O primitives ────────────────────────────────────────────────────────────
 
@@ -88,34 +146,37 @@ static char* build_prop_heap(EventBlock* block, size_t heap_size) {
     return heap;
 }
 
-static SegmentHeader build_header(EventBlock* b, size_t heap_size) {
+static SegmentHeader build_header(EventBlock* b, size_t ts_compressed_size, size_t heap_size) {
     SegmentHeader hdr = {0};
 
     uint64_t off_type_ids   = sizeof(SegmentHeader);
     uint64_t off_user_ids   = off_type_ids   + b->count * sizeof(uint32_t);
     uint64_t off_timestamps = off_user_ids   + b->count * sizeof(uint64_t);
-    uint64_t off_prop_index = off_timestamps + b->count * sizeof(uint64_t);
+    uint64_t off_prop_index = off_timestamps + ts_compressed_size;
     uint64_t off_prop_heap  = off_prop_index + b->count * sizeof(uint32_t);
 
     memcpy(hdr.magic, SEG_MAGIC, 8);
-    hdr.version           = SEG_VERSION;
-    hdr.event_count       = b->count;
-    hdr.min_timestamp     = b->min_timestamp;
-    hdr.max_timestamp     = b->max_timestamp;
-    hdr.offset_type_ids   = off_type_ids;
-    hdr.offset_user_ids   = off_user_ids;
-    hdr.offset_timestamps = off_timestamps;
-    hdr.offset_prop_index = off_prop_index;
-    hdr.offset_prop_heap  = off_prop_heap;
-    hdr.prop_heap_size    = heap_size;
+    hdr.version            = SEG_VERSION;
+    hdr.event_count        = b->count;
+    hdr.min_timestamp      = b->min_timestamp;
+    hdr.max_timestamp      = b->max_timestamp;
+    hdr.offset_type_ids    = off_type_ids;
+    hdr.offset_user_ids    = off_user_ids;
+    hdr.offset_timestamps  = off_timestamps;
+    hdr.ts_compressed_size = ts_compressed_size;
+    hdr.offset_prop_index  = off_prop_index;
+    hdr.offset_prop_heap   = off_prop_heap;
+    hdr.prop_heap_size     = heap_size;
 
     return hdr;
 }
 
-static int write_columns(int fd, EventBlock* b) {
+static int write_columns(int fd, EventBlock* b, const uint8_t* ts_buf, size_t ts_size) {
     if (write_buf(fd, b->event_type_ids, b->count * sizeof(uint32_t)) != FE_OK) return FE_IO_ERROR;
     if (write_buf(fd, b->user_ids,       b->count * sizeof(uint64_t)) != FE_OK) return FE_IO_ERROR;
-    if (write_buf(fd, b->timestamps,     b->count * sizeof(uint64_t)) != FE_OK) return FE_IO_ERROR;
+    if (ts_size > 0) {
+        if (write_buf(fd, ts_buf, ts_size) != FE_OK) return FE_IO_ERROR;
+    }
     return FE_OK;
 }
 
@@ -123,6 +184,8 @@ static int write_to_file(
     const char*    path,
     SegmentHeader* hdr,
     EventBlock*    b,
+    const uint8_t* ts_buf,
+    size_t         ts_size,
     uint32_t*      prop_offsets,
     char*          prop_heap,
     size_t         heap_size
@@ -132,11 +195,11 @@ static int write_to_file(
 
     int err = FE_OK;
 
-    if (write_buf(fd, hdr, sizeof(SegmentHeader))               != FE_OK) { err = FE_IO_ERROR; goto cleanup; }
-    if (write_columns(fd, b)                                    != FE_OK) { err = FE_IO_ERROR; goto cleanup; }
+    if (write_buf(fd, hdr, sizeof(SegmentHeader))                != FE_OK) { err = FE_IO_ERROR; goto cleanup; }
+    if (write_columns(fd, b, ts_buf, ts_size)                    != FE_OK) { err = FE_IO_ERROR; goto cleanup; }
     if (write_buf(fd, prop_offsets, b->count * sizeof(uint32_t)) != FE_OK) { err = FE_IO_ERROR; goto cleanup; }
     if (heap_size > 0) {
-        if (write_buf(fd, prop_heap, heap_size)                 != FE_OK) { err = FE_IO_ERROR; goto cleanup; }
+        if (write_buf(fd, prop_heap, heap_size)                  != FE_OK) { err = FE_IO_ERROR; goto cleanup; }
     }
     if (datasync(fd) != 0) err = FE_IO_ERROR;
 
@@ -154,11 +217,24 @@ static int read_and_validate_header(int fd, SegmentHeader* hdr) {
     return FE_OK;
 }
 
-static int read_columns(int fd, EventBlock* b, size_t n) {
+static int read_columns(int fd, EventBlock* b, size_t n, size_t ts_compressed_size) {
     if (read_buf(fd, b->event_type_ids, n * sizeof(uint32_t)) != FE_OK) return FE_IO_ERROR;
     if (read_buf(fd, b->user_ids,       n * sizeof(uint64_t)) != FE_OK) return FE_IO_ERROR;
-    if (read_buf(fd, b->timestamps,     n * sizeof(uint64_t)) != FE_OK) return FE_IO_ERROR;
-    return FE_OK;
+
+    if (n == 0) return FE_OK;
+
+    uint8_t* ts_buf = malloc(ts_compressed_size);
+    if (!ts_buf) return FE_OUT_OF_MEMORY;
+
+    int err = FE_OK;
+    if (read_buf(fd, ts_buf, ts_compressed_size) != FE_OK) {
+        err = FE_IO_ERROR; goto done;
+    }
+    err = timestamps_decompress(ts_buf, ts_compressed_size, b->timestamps, n);
+
+done:
+    free(ts_buf);
+    return err;
 }
 
 // Reconstruct per-event property strings from the prop index + heap.
@@ -180,41 +256,9 @@ static int read_prop_strings(EventBlock* block, uint32_t* prop_offsets, const ch
     return FE_OK;
 }
 
-// ── Public API ────────────────────────────────────────────────────────────────
-
-int segment_write_to_disk(Segment* seg, const char* dir) {
-    if (!seg || !dir || !seg->block) return FE_INVALID_ARG;
-
-    EventBlock* b = seg->block;
-
-    uint32_t* prop_offsets = malloc(b->count * sizeof(uint32_t));
-    if (!prop_offsets) return FE_OUT_OF_MEMORY;
-
-    size_t heap_size = build_prop_offsets(b, prop_offsets);
-
-    char* prop_heap = build_prop_heap(b, heap_size);
-    if (heap_size > 0 && !prop_heap) {
-        free(prop_offsets);
-        return FE_OUT_OF_MEMORY;
-    }
-
-    SegmentHeader hdr = build_header(b, heap_size);
-    int err = write_to_file(seg->file_path, &hdr, b, prop_offsets, prop_heap, heap_size);
-
-    if (err == FE_OK) {
-        seg->min_timestamp = b->min_timestamp;
-        seg->max_timestamp = b->max_timestamp;
-        seg->event_count   = b->count;
-    }
-
-    free(prop_offsets);
-    free(prop_heap);
-    return err;
-}
-
-// Read column arrays and property strings from fd into a pre-allocated block.
-static int read_block_data(int fd, size_t n, size_t prop_heap_size, EventBlock* block) {
-    if (read_columns(fd, block, n) != FE_OK) return FE_IO_ERROR;
+static int read_block_data(int fd, size_t n, size_t ts_compressed_size,
+                           size_t prop_heap_size, EventBlock* block) {
+    if (read_columns(fd, block, n, ts_compressed_size) != FE_OK) return FE_IO_ERROR;
 
     uint32_t* prop_offsets = malloc(n * sizeof(uint32_t));
     if (!prop_offsets) return FE_OUT_OF_MEMORY;
@@ -235,6 +279,48 @@ static int read_block_data(int fd, size_t n, size_t prop_heap_size, EventBlock* 
     err = read_prop_strings(block, prop_offsets, prop_heap, n);
 
 done:
+    free(prop_offsets);
+    free(prop_heap);
+    return err;
+}
+
+// ── Public API ────────────────────────────────────────────────────────────────
+
+int segment_write_to_disk(Segment* seg, const char* dir) {
+    if (!seg || !dir || !seg->block) return FE_INVALID_ARG;
+
+    EventBlock* b = seg->block;
+    int err = FE_OK;
+
+    size_t ts_size = 0;
+    uint8_t* ts_buf = b->count > 0
+        ? timestamps_compress(b->timestamps, b->count, &ts_size)
+        : NULL;
+    if (b->count > 0 && !ts_buf) return FE_OUT_OF_MEMORY;
+
+    uint32_t* prop_offsets = malloc(b->count * sizeof(uint32_t));
+    if (!prop_offsets) { free(ts_buf); return FE_OUT_OF_MEMORY; }
+
+    size_t heap_size = build_prop_offsets(b, prop_offsets);
+
+    char* prop_heap = build_prop_heap(b, heap_size);
+    if (heap_size > 0 && !prop_heap) {
+        free(ts_buf);
+        free(prop_offsets);
+        return FE_OUT_OF_MEMORY;
+    }
+
+    SegmentHeader hdr = build_header(b, ts_size, heap_size);
+    err = write_to_file(seg->file_path, &hdr, b, ts_buf, ts_size,
+                        prop_offsets, prop_heap, heap_size);
+
+    if (err == FE_OK) {
+        seg->min_timestamp = b->min_timestamp;
+        seg->max_timestamp = b->max_timestamp;
+        seg->event_count   = b->count;
+    }
+
+    free(ts_buf);
     free(prop_offsets);
     free(prop_heap);
     return err;
@@ -274,7 +360,8 @@ int segment_load_from_disk(Segment* seg) {
     if (!block) { close(fd); return FE_OUT_OF_MEMORY; }
 
     if (n > 0) {
-        err = read_block_data(fd, n, (size_t)hdr.prop_heap_size, block);
+        err = read_block_data(fd, n, (size_t)hdr.ts_compressed_size,
+                              (size_t)hdr.prop_heap_size, block);
         if (err != FE_OK) { destroy_event_block(block); close(fd); return err; }
     }
 
@@ -289,4 +376,3 @@ int segment_load_from_disk(Segment* seg) {
     close(fd);
     return FE_OK;
 }
-

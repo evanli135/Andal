@@ -15,13 +15,11 @@ import tempfile
 import time
 from pathlib import Path
 
-# _fastevents.pyd lives in the repo root; Python package lives in python/
 ROOT = str(Path(__file__).parent.parent)
 sys.path.insert(0, ROOT)
-sys.path.insert(0, str(Path(ROOT) / "python"))
 
 import pytest
-from fastevents.store import EventStore
+from andal.store import EventStore
 
 # Fixed base timestamp so tests are deterministic
 T = 1_735_689_600_000  # ms

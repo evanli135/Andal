@@ -1,4 +1,13 @@
-from setuptools import setup, Extension
+import sys
+from setuptools import setup, Extension, find_packages
+
+# MSVC doesn't accept -std=c11 or -Wall; use equivalent MSVC flags instead.
+if sys.platform == "win32":
+    compile_args = ["/std:c11", "/O2", "/W3",
+                    "/D_CRT_SECURE_NO_WARNINGS",
+                    "/D_CRT_NONSTDC_NO_WARNINGS"]
+else:
+    compile_args = ["-std=c11", "-O2", "-Wall"]
 
 sources = [
     "src/fastevents_module.c",
@@ -12,15 +21,19 @@ sources = [
     "src/query.c",
 ]
 
-fastevents_ext = Extension(
-    name="fastevents",
+andal_ext = Extension(
+    name="andal._andal",
     sources=sources,
-    extra_compile_args=["-std=c11", "-O2", "-Wall"],
+    include_dirs=["src"],
+    extra_compile_args=compile_args,
 )
 
 setup(
-    name="fastevents",
+    name="andal",
     version="0.1.0",
-    description="Embedded columnar event store",
-    ext_modules=[fastevents_ext],
+    description="High-performance embedded event store for Python",
+    license="MIT",
+    packages=find_packages(exclude=["tests", "examples"]),
+    ext_modules=[andal_ext],
+    python_requires=">=3.8",
 )
