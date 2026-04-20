@@ -54,7 +54,9 @@ Andal is a fast, embedded event store built for analytics. Store millions of eve
 
 ### Up and running in 30 seconds
 
-No server. No Docker. No config. Open a file path and start tracking — works in notebooks, Flask apps, Lambda functions, anywhere Python runs.
+Forget servers, docker, and config. 
+
+No config. Open a file path and start tracking — works in notebooks, Flask apps, Lambda functions, anywhere Python runs.
 
 </td>
 <td width="70%">
@@ -82,7 +84,7 @@ store.track("churn", user_id=2)
 
 ### Analytics without SQL
 
-Funnels, aggregations, and filters in one line of Python. No GROUP BY, no JOINs, no headaches.
+Funnels, aggregations, and filters in one line of Python. No GROUP BY, JOINs, or headaches.
 
 </td>
 <td width="70%">
@@ -112,7 +114,7 @@ store.unique("user_id", since="7d")  # 4,891
 
 ### Built for events, not rows
 
-Every event is timestamped and immutable. Ask questions a regular database can't answer — full user histories, pre-crash sequences, pattern analysis.
+Every event is timestamped and immutable. Ask questions a regular database can't answer and get it answered fast: full user histories, pre-crash sequences, pattern analysis.
 
 </td>
 <td width="70%">
