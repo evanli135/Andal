@@ -162,6 +162,8 @@ store = EventStore("./my_app")
 </td>
 </tr>
 </table>
+
+
 ---
 
 ## Python API
