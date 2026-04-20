@@ -56,7 +56,7 @@ Andal is a fast, embedded event store built for analytics. Store millions of eve
 
 Forget servers, docker, and config. 
 
-No config. Open a file path and start tracking — works in notebooks, Flask apps, Lambda functions, anywhere Python runs.
+Open a file path and start tracking — works in notebooks, Flask apps, Lambda functions, anywhere Python runs.
 
 </td>
 <td width="70%">
