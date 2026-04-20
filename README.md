@@ -21,7 +21,7 @@ run funnels and aggregations — all from a simple Python API, no SQL required.
 ## Quick Start
 
 ```bash
-pip install -e .
+pip install andal
 ```
 
 ```python
