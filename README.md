@@ -21,7 +21,7 @@ run funnels and aggregations — all from a simple Python API, no SQL required.
 ## Quick Start
 
 ```bash
-pip install -e .
+pip install andal
 ```
 
 ```python
@@ -50,30 +50,28 @@ Andal is a fast, embedded event store built for analytics. Store millions of eve
 
 <table>
 <tr>
-<td width="50%">
+<td width="30%">
 
-### Serverless & Embedded
+### Up and running in 30 seconds
 
-No separate server process. No configuration files. No Docker containers. Just a Python import and a file path.
+Forget servers, docker, and config. 
 
-Perfect for applications, scripts, notebooks, and edge devices. Your data stays local.
+Open a file path and start tracking — works in notebooks, Flask apps, Lambda functions, anywhere Python runs.
 
 </td>
-<td width="50%">
+<td width="70%">
 
 ```python
-import andal
+from andal import EventStore
 
-# That's it. No server to start.
-# No connection strings.
-# No authentication setup.
+# This is the entire setup.
+store = EventStore("./my_app")
 
-store = andal.EventStore("./data")
+store.track("signup", user_id=1)
+store.track("purchase", user_id=1, amount=49.99)
+store.track("churn", user_id=2)
 
-# Works in Jupyter notebooks
-# Works in Flask apps
-# Works in CLI scripts
-# Works anywhere Python runs
+# Data is on disk. Nothing else required.
 ```
 
 </td>
@@ -82,30 +80,28 @@ store = andal.EventStore("./data")
 
 <table>
 <tr>
-<td width="50%">
+<td width="30%">
 
-### Columnar Storage
+### Analytics without SQL
 
-Events are stored in columnar format — each field (timestamps, user IDs, event types) lives in its own array. This makes filtering and aggregations extremely cache-friendly.
-
-Reading only the columns you need is 10x faster than reading entire rows.
+Funnels, aggregations, and filters in one line of Python. No GROUP BY, JOINs, or headaches.
 
 </td>
-<td width="50%">
+<td width="70%">
 
 ```python
-# Each field stored separately for fast scans
-event_type_ids: [0, 1, 0, 2, 0, ...]
-# Dictionary-encoded
+# Conversion funnel
+store.funnel(["page_view", "signup", "purchase"])
+# page_view  → 10,000 users
+# signup     → 1,200  (12%)
+# purchase   → 240    (2.4%)
 
-user_ids: [123, 456, 123, ...]
-# Raw integers
+# What's happening right now?
+store.count_by("event_type", since="24h")
+# {"page_view": 8432, "signup": 91}
 
-timestamps: [1000, 1001, 1002, ...]
-# Milliseconds
-
-properties: ['{"page": "/home"}', ...]
-# JSON strings
+# Unique users this week
+store.unique("user_id", since="7d")  # 4,891
 ```
 
 </td>
@@ -114,33 +110,26 @@ properties: ['{"page": "/home"}', ...]
 
 <table>
 <tr>
-<td width="50%">
+<td width="30%">
 
-### Time-Based Filtering
+### Built for events, not rows
 
-Filter events by type, user, or time range. The partition index prunes irrelevant segments without loading them into memory.
-
-Query only the time ranges you care about. Old segments stay on disk.
+Every event is timestamped and immutable. Ask questions a regular database can't answer and get it answered fast: full user histories, pre-crash sequences, pattern analysis.
 
 </td>
-<td width="50%">
+<td width="70%">
 
 ```python
-import time
+# Everything a user ever did
+store.filter(user_id=123)
 
-# Filter by event type
-views = store.filter(event_type="page_view")
+# All errors in the last hour
+store.filter(event_type="error", since="1h")
 
-# Filter by user
-user_events = store.filter(user_id=123)
+# What happened before this crash?
+store.filter(user_id=123, end_time=crash_timestamp)
 
-# Time range queries
-now_ms = int(time.time() * 1000)
-day_ago = now_ms - (24 * 60 * 60 * 1000)
-recent = store.filter(
-    start_time=day_ago,
-    end_time=now_ms
-)
+# Full history. Nothing deleted. Ever.
 ```
 
 </td>
@@ -149,133 +138,31 @@ recent = store.filter(
 
 <table>
 <tr>
-<td width="50%">
+<td width="30%">
 
-### Built-In Aggregations
+### Your data survives crashes
 
-Count, group, and analyze events without writing complex SQL.
-
-Get insights in one line of code. No GROUP BY, no CTEs, no headaches.
+Events hit a write-ahead log before anything else. If your process dies, data is recovered automatically on next open.
 
 </td>
-<td width="50%">
+<td width="70%">
 
 ```python
-# Count by dimension
-counts = store.count_by("event_type")
-# {"page_view": 15234, "click": 892}
+store.track("payment_confirmed", order_id="ORD-123", amount=99.99)
 
-# Unique values
-unique_users = store.unique(
-    "user_id",
-    event_type="purchase"
-)
-# 4523
+# Process crashes here.
 
-# Event counts
-event_counts = store.event_counts()
-# {"page_view": 15234, "click": 892}
+# On restart:
+store = EventStore("./my_app")
+# ✓ payment_confirmed is recovered
+# ✓ No data loss
+# ✓ No manual recovery steps
 ```
 
 </td>
 </tr>
 </table>
 
-<table>
-<tr>
-<td width="50%">
-
-### Funnel Analysis
-
-Track user journeys through multi-step flows. Perfect for conversion analysis.
-
-Understand drop-off points in user flows without joining tables or writing complex queries.
-
-</td>
-<td width="50%">
-
-```python
-# How many users convert?
-funnel = store.funnel(
-    steps=[
-        "page_view",
-        "add_to_cart",
-        "purchase"
-    ],
-    within=3_600_000  # 1 hour
-)
-
-# [{"step": "page_view",
-#   "users": 1000,
-#   "conversion_rate": 1.0},
-#  {"step": "add_to_cart",
-#   "users": 120,
-#   "conversion_rate": 0.12}, ...]
-```
-
-</td>
-</tr>
-</table>
-
-<table>
-<tr>
-<td width="50%">
-
-### Crash-Safe Durability
-
-Write-ahead log (WAL) ensures no data loss. If your process crashes, Andal recovers all unflushed events on restart.
-
-Your data survives crashes and power loss. No silent data loss, ever.
-
-</td>
-<td width="50%">
-
-```python
-store.track(
-    "payment_received",
-    user_id=123,
-    amount=99.99
-)
-
-# ✓ Event is durable immediately
-#   (written to WAL)
-# ✓ Survives process crashes
-# ✓ Recovered on next open
-```
-
-</td>
-</tr>
-</table>
-
-<table>
-<tr>
-<td width="50%">
-
-### Lazy Loading
-
-Segments are loaded from disk only when queried, then unloaded to conserve memory.
-
-Handle datasets larger than RAM. Memory footprint stays small even with millions of events.
-
-</td>
-<td width="50%">
-
-```python
-# Query spans 100 segments,
-# but only matching ones are loaded
-events = store.filter(
-    event_type="purchase",
-    start_time=last_month
-)
-
-# → Loads 3 segments that contain
-#   purchases in that time range
-# → Other 97 segments stay on disk
-```
-
-</td>
-</tr>
-</table>
 
 ---
 
