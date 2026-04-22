@@ -553,6 +553,6 @@ TBD
 
 **Built with ⚡ for speed**
 
-[Documentation](about.md) • [Architecture](ARCHITECTURE.md) • [Implementation Notes](IMPLEMENTATION_NOTES.md)
+[Architecture](ARCHITECTURE.md)
 
 </div>
