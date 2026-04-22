@@ -1,250 +1,152 @@
-# FastEvents Architecture
+# Andal Architecture
 
 ## Overview
 
-Lightweight embedded event store with 5-layer architecture optimized for analytics workloads.
-
-## Layer Architecture
+Andal is a layered embedded event store. Each layer has a single responsibility; the coordinator wires them together.
 
 ```
-┌──────────────────────────────────────────────────────────┐
-│  Layer 5: PartitionIndex                                 │
-│  Time range → Segment ID mapping (binary search)         │
-└────────────────────────┬─────────────────────────────────┘
-                         │
-┌────────────────────────▼─────────────────────────────────┐
-│  Layer 4: InvertedIndex                                  │
-│  Event type → Row IDs (per segment)                      │
-└────────────────────────┬─────────────────────────────────┘
-                         │
-┌────────────────────────▼─────────────────────────────────┐
-│  Layer 2/3: Columnar Segments                            │
-│  Immutable columnar files on disk                        │
-└────────────────────────┬─────────────────────────────────┘
-                         │
-┌────────────────────────▼─────────────────────────────────┐
-│  Layer 1: WAL (Write-Ahead Log)                          │
-│  Sequential append-only buffer → disk                    │
-└──────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────┐
+│  Python API  (andal.EventStore)         │
+│  andal/store.py + src/fastevents_module │
+└───────────────────┬─────────────────────┘
+                    │
+┌───────────────────▼─────────────────────┐
+│  Coordinator  (src/coordinator.c)       │
+│  EventStore — owns all layers below     │
+└──┬──────────┬──────────┬───────────────┘
+   │          │          │
+┌──▼──┐  ┌───▼───┐  ┌───▼──────────────┐
+│ WAL │  │ Disk  │  │ PartitionIndex   │
+│     │  │Segments│  │ time → seg IDs   │
+└──┬──┘  └───┬───┘  └──────────────────┘
+   │          │
+┌──▼──────────▼──────────────────────────┐
+│  EventBlock  (columnar in-memory)      │
+│  event_type_ids / user_ids /           │
+│  timestamps / properties               │
+└────────────────────────────────────────┘
 ```
 
-## Component Status
+## Components
 
-### ✅ Implemented
+### WAL — Write-Ahead Log (`src/wal.c`)
 
-1. **StringDict** (`src/stringdict.c`)
-   - Hash table with djb2 hash
-   - Open addressing, linear probing
-   - Power-of-2 capacity
-   - Event type → ID encoding
+Every append lands here first. A 4 MB in-memory buffer flushed to `wal.log` via `write() + fdatasync()`. Length-prefixed entries (4-byte header + payload). On open, `wal_recover()` replays any entries that never made it into a segment before the last crash.
 
-2. **EventBlock** (`src/eventstore.c`)
-   - Columnar in-memory storage
-   - Separate arrays per field
-   - Dynamic growth
-   - `append_to_block()` working
+Flush triggers: 10,000 events, 4 MB buffer, or 1,000 ms timer — whichever comes first.
 
-3. **WAL** (`src/wal.c`, `src/wal.h`)
-   - 4MB buffer with auto-flush
-   - Length-prefixed entries
-   - `fdatasync()` for durability
-   - Crash recovery via `wal_recover()`
-   - Flush at 10K events
+### EventBlock — Columnar In-Memory Storage (`src/events.c`)
 
-### 🔲 TODO
-
-4. **Segment** (wrapper around EventBlock)
-   - Write EventBlock to disk
-   - Lazy load/unload
-   - Metadata tracking
-
-5. **InvertedIndex** (event type → rows)
-   - Build from EventBlock
-   - Write/load from .idx files
-   - O(1) event type filtering
-
-6. **PartitionIndex** (time → segments)
-   - Binary search pruning
-   - In-memory sorted array
-   - Rebuild on startup
-
-7. **EventStore** (coordinator)
-   - Owns all layers
-   - Write path: append → WAL → flush → Segment
-   - Read path: query → prune → load → filter
-
-## File Layout
-
-```
-store/
-├── wal.log              ← Active write-ahead log
-├── segments/
-│   ├── seg_00001.dat    ← Columnar event data
-│   ├── seg_00001.idx    ← Inverted index
-│   ├── seg_00002.dat
-│   └── seg_00002.idx
-└── metadata.json        ← PartitionIndex + StringDict
-```
-
-## Data Structures
-
-### StringDict
-```c
-typedef struct {
-    char** strings;      // Hash table (NULL = empty)
-    uint32_t* ids;       // IDs for each slot
-    size_t count;
-    size_t capacity;     // Power of 2
-} StringDict;
-```
-
-### EventBlock
-```c
-typedef struct {
-    size_t count;
-    size_t capacity;
-    uint32_t* event_type_ids;  // Dictionary-encoded
-    uint64_t* user_ids;
-    uint64_t* timestamps;
-    char** properties;         // JSON strings
-    uint64_t min_timestamp;
-    uint64_t max_timestamp;
-} EventBlock;
-```
-
-### WAL
-```c
-typedef struct {
-    int fd;
-    uint8_t* buffer;        // 4MB staging buffer
-    size_t buf_len;         // Write cursor
-    size_t buf_capacity;
-    size_t event_count;     // Events since last flush
-    size_t flush_threshold; // Flush at 10K events
-    char* path;
-} WAL;
-```
-
-### Segment
-```c
-typedef struct {
-    uint64_t segment_id;
-    EventBlock* block;      // NULL if unloaded
-    char* file_path;
-    bool is_loaded;
-    uint64_t min_timestamp;
-    uint64_t max_timestamp;
-    size_t event_count;
-} Segment;
-```
-
-### EventStore
-```c
-typedef struct {
-    char* db_path;
-    void* wal;              // WAL* (opaque)
-    StringDict* event_dict;
-    Segment** segments;
-    size_t num_segments;
-    PartitionIndex* partition_idx;
-    EventBlock* active_block;
-} EventStore;
-```
-
-## Write Path
-
-```
-event_store_append("page_view", user=123, ...)
-    ↓
-1. StringDict: "page_view" → ID 0
-    ↓
-2. Serialize to WAL buffer: [len|type_id|user|ts|props]
-    ↓
-3. Auto-flush at threshold (10K events)
-    ↓
-wal_flush_to_disk()
-    ↓
-4. write() + fdatasync() → durability
-    ↓
-5. Deserialize → EventBlock
-    ↓
-6. Write segment to disk:
-   - seg_00001.dat (columnar arrays)
-   - seg_00001.idx (inverted index)
-    ↓
-7. Update PartitionIndex
-```
-
-## Read Path
-
-```
-event_store_filter(event_type="page_view", start_time=...)
-    ↓
-1. PartitionIndex: binary search time range → [seg_1, seg_5, seg_9]
-    ↓
-2. For each segment:
-   - Load from disk if needed
-   - InvertedIndex: "page_view" → [row_2, row_5, row_10, ...]
-   - Filter by other criteria (user_id, timestamp)
-    ↓
-3. Flatten results from all segments
-    ↓
-4. Return QueryResult
-```
-
-## Configuration
+The active write buffer and the in-memory representation of a segment. Each field is a separate heap array:
 
 ```c
-#define WAL_DEFAULT_BUFFER_CAPACITY (4 * 1024 * 1024)  // 4MB
-#define WAL_DEFAULT_FLUSH_THRESHOLD 10000               // 10K events
-#define DEFAULT_BLOCK_CAPACITY 10000                    // 10K events/segment
+uint32_t* event_type_ids   // dictionary-encoded (4 bytes → 1–2 bytes on disk)
+uint64_t* user_ids
+uint64_t* timestamps
+char**    properties        // heap-allocated JSON strings
 ```
 
-## Testing
+Tracks `min_timestamp`, `max_timestamp`, and `estimated_bytes` for flush decisions.
 
-```bash
-make test-stringdict   # StringDict tests
-make test-eventblock   # EventBlock tests
-make test-append       # append_to_block tests
-make test-wal          # WAL tests
+### StringDict — Event Type Encoding (`src/stringdict.c`)
+
+Hash table mapping event type strings (e.g. `"page_view"`) to compact `uint32_t` IDs. djb2 hash, open addressing, linear probing. Persisted to `event_types.txt` and reloaded on open so IDs are stable across sessions.
+
+### Segments — Immutable Disk Files (`src/disk.c`)
+
+When the active EventBlock is flushed, it becomes an immutable segment file (`seg_00001.dat`, `seg_00002.dat`, …). The binary format:
+
+```
+SegmentHeader (fixed-size)
+  magic[8]           EVTSEG\0\0
+  version            uint32
+  event_count        uint64
+  min/max_timestamp  uint64
+  column offsets     uint64 × 5
+
+Column data (variable)
+  event_type_ids     uint32[] raw
+  user_ids           uint64[] raw
+  timestamps         delta + LEB128 varint encoded
+  properties         index (uint32 offsets) + heap (concatenated strings)
 ```
 
-## Next Steps
+Segments are **lazy-loaded**: `is_loaded = false` until a query touches them, then unloaded again after the scan. This keeps memory flat regardless of how many segments exist on disk.
 
-### Priority 1: Segment Layer
-- [ ] `segment_create()`
-- [ ] `segment_write_to_disk()` - serialize EventBlock
-- [ ] `segment_load_from_disk()` - deserialize to EventBlock
-- [ ] File format: header + columnar arrays
+`segment_peek_metadata()` reads only the header to populate `min_timestamp`, `max_timestamp`, and `event_count` without loading event data — used during startup to rebuild the partition index cheaply.
 
-### Priority 2: EventStore Coordinator
-- [ ] `event_store_open()` - initialize all layers
-- [ ] `event_store_append()` - write to WAL
-- [ ] `event_store_flush()` - WAL → Segment
-- [ ] `event_store_close()` - cleanup
+### PartitionIndex — Time Pruning (`src/partition.c`)
 
-### Priority 3: Query Path
-- [ ] Linear scan filter (single segment)
-- [ ] Multi-segment query
-- [ ] PartitionIndex time pruning
+Sorted array of `(min_ts, max_ts, segment_id)` entries. `partition_index_query(start, end)` returns only the segment IDs whose time range overlaps the query window. This lets time-range queries skip irrelevant segments entirely without loading them.
 
-### Priority 4: Performance
-- [ ] InvertedIndex building
-- [ ] Index-accelerated queries
-- [ ] Lazy segment loading
+### Coordinator (`src/coordinator.c`)
 
-## Performance Targets
+Owns all components and implements the write and read paths.
 
-- **Write**: 100K events/sec (WAL buffered)
-- **Flush**: 10K events → segment in <100ms
-- **Query**: Filter 1M events in <10ms (with indexes)
-- **Memory**: <50 bytes/event in-memory
-- **Disk**: <20 bytes/event compressed
+**Write path:**
+```
+event_store_append(event_type, user_id, ts, props)
+  1. StringDict: resolve/assign type_id, persist if new
+  2. Encode event → binary blob
+  3. wal_append()  ← durable before in-memory
+  4. append_to_block(active_block)
+  5. should_flush()? → event_store_flush()
+```
 
-## Design Principles
+**Flush path:**
+```
+event_store_flush()
+  1. segment_write_to_disk()  ← write before registering
+  2. grow_segments_array() if needed
+  3. register_segment()       ← add to segments[] + partition_idx
+  4. wal_truncate()           ← WAL entries now redundant
+  5. fresh active_block
+```
 
-1. **Durability first**: WAL + fdatasync guarantees no data loss
-2. **Immutable segments**: Write-once, never modify
-3. **Columnar access**: Read only columns needed for query
-4. **Lazy loading**: Load segments on demand
-5. **Simple file format**: Easy to debug, no complex dependencies
+**Read path:**
+```
+event_store_filter(event_type, user_id, start_ts, end_ts)
+  1. partition_index_query() → candidate segment IDs
+  2. for each segment: lazy-load → scan → unload
+  3. scan active_block
+  4. return QueryResult
+```
+
+**Startup:**
+```
+event_store_open(path)
+  1. mkdir (no-op if exists)
+  2. open WAL, load StringDict
+  3. scan_and_register_segments()  ← discover seg_*.dat files
+  4. segment_peek_metadata() for each → rebuild PartitionIndex
+  5. wal_recover() → replay events into active_block
+```
+
+## On-disk Layout
+
+```
+<db_path>/
+  wal.log           write-ahead log (truncated after each flush)
+  event_types.txt   string dictionary (one type per line)
+  seg_00001.dat     columnar segment
+  seg_00002.dat
+  ...
+```
+
+## Python Binding (`src/fastevents_module.c`)
+
+A CPython C extension (`andal._andal`). `PyEventStore` wraps a `EventStore*` behind `PyObject_HEAD`. Arguments are marshalled with `PyArg_ParseTupleAndKeywords`; results with `PyDict_New` / `PyList_Append`. `PyInit__andal` is the module entry point.
+
+The high-level `andal.EventStore` Python class (`andal/store.py`) wraps the C extension with `track()`, `filter()`, `count_by()`, `unique()`, `funnel()`, and `first()`/`last()`.
+
+## Design Decisions
+
+| Decision | Rationale |
+|---|---|
+| WAL before in-memory | Durability — crash after WAL write loses nothing |
+| Write disk before registering segment | Safe crash window: orphaned file is harmless, orphaned index entry is not |
+| Immutable segments | Simple to reason about; no partial-write corruption risk |
+| Lazy segment loading | Memory stays flat with large histories |
+| Columnar arrays | Cache-efficient scans; only load the columns a query needs |
+| Dictionary-encoded event types | Reduces per-event storage from ~20 bytes to 4 bytes |
+| Delta + LEB128 timestamps | Sorted timestamps compress well; typical delta fits in 1–2 bytes |
