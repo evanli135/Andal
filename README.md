@@ -8,7 +8,7 @@
 
 No Server | No SQL | No Config
 
-**`pip install andal` — then forget about your analytics infrastructure.**
+**`pip install andal` and forget about your analytics infrastructure.**
 
 SQLite for events — embedded, columnar, zero ops.
 
